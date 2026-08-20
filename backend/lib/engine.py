@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from lib import market, narrator, settings as settings_mod, strategy
+from lib import market, market_sessions, narrator, settings as settings_mod, strategy
 from lib.db import db
 
 logger = logging.getLogger("engine")
@@ -472,6 +472,20 @@ async def guards(cfg: Dict[str, Any]) -> Dict[str, Any]:
         }
     )
 
+    sess = market_sessions.snapshot()
+    session_ok = (not bool(cfg.get("session_filter_enabled", True))) or bool(sess["tradeable"])
+    checks.append(
+        {
+            "name": "Session liquidity",
+            "passed": session_ok,
+            "detail": (
+                f"{sess['liquidity']} liquidity at {sess['utc_time']} UTC"
+                + (f" — {', '.join(sess['active'])} open" if sess["active"] else " — no major session open")
+                + ("" if bool(cfg.get("session_filter_enabled", True)) else " (filter off)")
+            ),
+        }
+    )
+
     day_pnl = await _day_pnl()
     limit = -wallet["starting_balance"] * float(cfg["daily_loss_limit_pct"]) / 100
     checks.append(
@@ -686,5 +700,6 @@ async def dashboard(timeframe: str) -> Dict[str, Any]:
         "history": await trade_history(40),
         "config": await config(),
         "guards": {**g, "last_block_reason": _last_block_reason},
+        "sessions": market_sessions.snapshot(),
         "server_time": _now().isoformat(),
     }

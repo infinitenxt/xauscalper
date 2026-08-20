@@ -85,6 +85,53 @@ The dashboard fires every **5 seconds**, shows the line under the banner
 (`data-testid="live-commentary"`) and speaks it only when voice is on and nothing
 else is already speaking, so announcements never overlap.
 
+## Auth, subscriptions and admin
+- **Auth** (`lib/auth.py`, `routers/auth_routes.py`): bcrypt passwords (passlib),
+  httpOnly cookie sessions (`gt_session`, 14 days). **One login per device** —
+  `create_session()` deletes every other session for that user, so signing in on
+  a new device instantly 401s the old one. Dependencies: `require_user` (401),
+  `require_admin` (403), `require_subscription` (**402**).
+- **Paywall**: the entire `routers/trading.py` router and `GET /backtest` carry
+  `Depends(auth.require_subscription)`. Admins always pass. The frontend guards
+  (`components/RouteGuards.tsx`) redirect to `/login` or `/subscribe`, and the
+  dashboard also reacts to a mid-session 402/401.
+- **Billing** (`routers/billing.py`): plans in Mongo; Razorpay order creation and
+  HMAC signature verification run through `asyncio.to_thread` (sync SDK). Keys are
+  read **from the DB per request** (admin-entered), never from env. With no keys
+  the paid flow is cleanly disabled (503) and an admin grants access manually.
+  `activate()` extends from the current expiry when still active.
+- **Admin** (`routers/admin.py`, `/admin/*`, all behind `require_admin`): stats,
+  user search / enable / disable / promote / demote / delete, grant or revoke a
+  subscription (by plan or arbitrary days), plan CRUD, payment log, Razorpay key
+  management (secret is write-only), website settings, and active-device list with
+  force sign-out. Guards prevent an admin disabling, demoting or deleting itself.
+- **Seed** (`backend/seed.py`, idempotent, runs each boot): admin account, three
+  plans (Monthly ₹999/30d, Quarterly ₹2499/90d, Yearly ₹7999/365d), site settings,
+  indexes. Credentials live in `memory/test_credentials.md`.
+- Collections added: `users`, `sessions`, `plans`, `payments`, `site_settings`.
+- **Deviation**: the paper-trading engine remains a **single shared** bot — all
+  subscribers watch the same wallet, signals and trade history. Per-user wallets
+  were not built.
+
+## Session awareness
+`lib/market_sessions.py` — Sydney / Tokyo / London / New York windows in UTC,
+with liquidity graded PEAK (London × New York overlap, 12:00–16:00 UTC) → HIGH →
+MEDIUM → LOW. Exposed at `GET /api/market/sessions` and inside `/api/dashboard`.
+The engine adds a **Session liquidity** guard: when `session_filter_enabled`
+(default on) and liquidity is LOW, no new trade opens. `components/SessionBar.tsx`
+shows a chip per session with open/close countdowns, the overlap badge and the
+liquidity grade.
+
+## Backtesting
+`lib/backtest.py` + `GET /api/backtest?timeframe&days` (subscribers only, cached
+120s, run via `asyncio.to_thread`). Replays the **same** `strategy.analyze` and
+management stack (break-even, partial TP, trailing, time cap) over real Binance
+gold candles. Conservative by design: entries fill at the signal bar's close, and
+a bar spanning both levels is scored as a **stop**. Returns trades, win rate, net
+P&L, return %, profit factor, avg R, max drawdown, avg hold, exit-reason
+breakdown, an equity curve and the trade list. UI: `components/BacktestPanel.tsx`
+(timeframe + 12h/1d/3d/7d range switches, equity-curve area chart, trade table).
+
 ## Data model (Mongo)
 - `wallet` — one doc `id="main"`: balance, starting_balance (10000), realized_pnl,
   wins, losses, trades_count.
@@ -93,7 +140,10 @@ else is already speaking, so announcements never overlap.
 - `signals` — a log row each time a signal triggers an auto-trade.
 
 ## Frontend
-`/` → `src/pages/Dashboard.tsx` (only route). Components:
+Routes: `/login`, `/register` (`pages/AuthPage.tsx`), `/subscribe`
+(`pages/Subscribe.tsx`, plan cards + Razorpay Checkout), `/admin`
+(`pages/Admin.tsx`, tabbed panel), `/` → `pages/Dashboard.tsx` behind
+`RequireSubscription`. Components:
 - `TickerBar` — price with tick flash, 24h stats, equity, today's P&L, AUTO ON/OFF
   badge, feed provider dot, timeframe switcher, reset, settings slot
 - `SignalBanner` — compact BUY / SELL / WAIT hero (3xl–4xl type, half its original
@@ -124,8 +174,11 @@ else is already speaking, so announcements never overlap.
 Theme: dark by default (`<html class="dark">`), JetBrains Mono Variable.
 
 ## Auth / seed
-None. No credentials. `POST /api/engine/reset` wipes trades/signals and restores
-the $10,000 paper balance.
+Admin seeded each boot: `admin@goldterminal.app` / `Harsh@10576` (see
+`memory/test_credentials.md`). Regular users register at `/register` and need a
+subscription — granted by an admin, by a trial-days setting, or via Razorpay.
+`POST /api/engine/reset` wipes trades/signals and restores the $10,000 paper
+balance (subscribers only).
 
 ## Testing notes
 - Trades only appear when the live market genuinely produces an 80%+ setup, so

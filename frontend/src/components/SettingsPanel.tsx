@@ -76,6 +76,7 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [autoTrade, setAutoTrade] = useState(true);
+  const [sessionFilter, setSessionFilter] = useState(true);
   const [tf, setTf] = useState("1m");
 
   useEffect(() => {
@@ -86,11 +87,16 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
     });
     setDraft(next);
     setAutoTrade(config.auto_trade_enabled);
+    setSessionFilter(config.session_filter_enabled);
     setTf(config.primary_timeframe);
   }, [config, open]);
 
   const save = () => {
-    const patch: Record<string, unknown> = { auto_trade_enabled: autoTrade, primary_timeframe: tf };
+    const patch: Record<string, unknown> = {
+      auto_trade_enabled: autoTrade,
+      session_filter_enabled: sessionFilter,
+      primary_timeframe: tf,
+    };
     Object.entries(draft).forEach(([k, v]) => {
       const num = Number(v);
       if (v !== "" && Number.isFinite(num)) patch[k] = num;
@@ -134,6 +140,21 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
               <Label className="text-slate-200">Auto-trading armed</Label>
               <p className="text-[11px] text-slate-500">
                 Master kill switch. Off = signals keep updating but no paper trade is ever opened.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 rounded border border-slate-800 bg-slate-950/50 p-3 sm:col-span-2">
+            <Checkbox
+              checked={sessionFilter}
+              onCheckedChange={(v) => setSessionFilter(Boolean(v))}
+              data-testid="session-filter-toggle"
+            />
+            <div>
+              <Label className="text-slate-200">Trade only in active sessions</Label>
+              <p className="text-[11px] text-slate-500">
+                Blocks entries when no major session is open (LOW liquidity), where gold spreads
+                widen and scalps get chopped up.
               </p>
             </div>
           </div>

@@ -167,6 +167,7 @@ class Trade(BaseModel):
 
 class EngineConfig(BaseModel):
     auto_trade_enabled: bool
+    session_filter_enabled: bool = True
     primary_timeframe: str
     confidence_threshold: float
     min_adx: float
@@ -197,6 +198,7 @@ class EngineConfig(BaseModel):
 
 class SettingsPatch(BaseModel):
     auto_trade_enabled: Optional[bool] = None
+    session_filter_enabled: Optional[bool] = None
     primary_timeframe: Optional[str] = None
     confidence_threshold: Optional[float] = None
     min_adx: Optional[float] = None
@@ -237,4 +239,28 @@ class Dashboard(BaseModel):
     history: List[Trade] = []
     config: EngineConfig
     guards: Guards
+    sessions: "SessionSnapshotRef"
     server_time: str
+
+
+class TradingSessionRef(BaseModel):
+    name: str
+    active: bool
+    open_utc: str
+    close_utc: str
+    minutes_to_open: int
+    minutes_to_close: int
+
+
+class SessionSnapshotRef(BaseModel):
+    utc_time: str
+    sessions: List[TradingSessionRef]
+    active: List[str]
+    liquidity: str
+    tradeable: bool
+    note: str
+    overlap_active: bool
+    minutes_to_overlap: int
+
+
+Dashboard.model_rebuild()

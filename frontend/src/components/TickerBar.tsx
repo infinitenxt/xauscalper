@@ -18,6 +18,7 @@ interface Props {
   live: boolean;
   autoTradeOn: boolean;
   settingsSlot: ReactNode;
+  userSlot: ReactNode;
 }
 
 export default function TickerBar({
@@ -32,6 +33,7 @@ export default function TickerBar({
   live,
   autoTradeOn,
   settingsSlot,
+  userSlot,
 }: Props) {
   const price = ticker?.price ?? null;
   const prev = useRef<number | null>(null);
@@ -181,6 +183,7 @@ export default function TickerBar({
           </Button>
 
           {settingsSlot}
+          {userSlot}
         </div>
       </div>
 

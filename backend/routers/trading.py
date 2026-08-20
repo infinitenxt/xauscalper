@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from lib import engine, market, settings as settings_mod
+from lib import auth, engine, market, settings as settings_mod
 from models.trading import (
     CandlesResponse,
     Dashboard,
@@ -19,7 +19,8 @@ from models.trading import (
     Wallet,
 )
 
-router = APIRouter(tags=["trading"])
+# The whole trading terminal is behind sign-in + an active subscription.
+router = APIRouter(tags=["trading"], dependencies=[Depends(auth.require_subscription)])
 
 
 def _tf(timeframe: str) -> str:

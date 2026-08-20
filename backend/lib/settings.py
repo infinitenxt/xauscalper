@@ -13,9 +13,10 @@ from lib.db import db
 SETTINGS_ID = "main"
 
 DEFAULTS: Dict[str, Any] = {
-    # --- what to trade -----------------------------------------------------
+    # --- editable settings (admin-only writes keep users from retuning the bot)
     "auto_trade_enabled": True,
     "primary_timeframe": "1m",
+    "session_filter_enabled": True,
     # --- entry quality -----------------------------------------------------
     "confidence_threshold": 80.0,
     "min_adx": 20.0,
@@ -83,7 +84,7 @@ _cache: Dict[str, Any] | None = None
 
 
 def _coerce(key: str, value: Any) -> Any:
-    if key == "auto_trade_enabled":
+    if key in ("auto_trade_enabled", "session_filter_enabled"):
         return bool(value)
     if key == "primary_timeframe":
         return value if value in TIMEFRAMES else DEFAULTS["primary_timeframe"]

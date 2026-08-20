@@ -159,6 +159,7 @@ export interface Trade {
 
 export interface EngineConfig {
   auto_trade_enabled: boolean;
+  session_filter_enabled: boolean;
   primary_timeframe: string;
   confidence_threshold: number;
   min_adx: number;
@@ -191,6 +192,7 @@ export type SettingsPatch = Partial<
   Pick<
     EngineConfig,
     | "auto_trade_enabled"
+    | "session_filter_enabled"
     | "primary_timeframe"
     | "confidence_threshold"
     | "min_adx"
@@ -232,8 +234,180 @@ export interface Dashboard {
   history: Trade[];
   config: EngineConfig;
   guards: Guards;
+  sessions: SessionSnapshot;
   server_time: string;
 }
+
+// ---------------------------------------------------------------- accounts
+export interface SubscriptionInfo {
+  plan_id: string | null;
+  plan_name: string | null;
+  status: string;
+  source: string | null;
+  started_at: string | null;
+  expires_at: string | null;
+  days_left: number;
+}
+
+export interface UserPublic {
+  id: string;
+  email: string;
+  username: string;
+  role: string;
+  is_active: boolean;
+  created_at: string | null;
+  subscribed: boolean;
+  subscription: SubscriptionInfo;
+}
+
+export interface AuthResponse {
+  user: UserPublic;
+  message: string;
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  price_inr: number;
+  days: number;
+  features: string[];
+  is_active: boolean;
+  highlight: boolean;
+}
+
+export interface BillingStatus {
+  plans: Plan[];
+  subscription: SubscriptionInfo;
+  razorpay_enabled: boolean;
+  razorpay_key_id: string | null;
+  currency: string;
+  message: string;
+}
+
+export interface OrderResponse {
+  order_id: string;
+  amount: number;
+  currency: string;
+  key_id: string;
+  plan: Plan;
+}
+
+export interface SiteSettings {
+  site_name: string;
+  tagline: string;
+  support_email: string;
+  allow_registration: boolean;
+  maintenance_mode: boolean;
+  trial_days: number;
+  razorpay_key_id: string;
+  razorpay_key_secret_set: boolean;
+  razorpay_enabled: boolean;
+}
+
+export interface AdminStats {
+  users_total: number;
+  users_active: number;
+  subscribers: number;
+  admins: number;
+  signed_in_now: number;
+  new_users_7d: number;
+  revenue_inr: number;
+  payments: number;
+  plans: number;
+}
+
+export interface SessionRow {
+  user_id: string;
+  email: string;
+  username: string;
+  user_agent: string;
+  ip: string;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export interface PaymentRow {
+  id: string;
+  user_id: string;
+  email: string;
+  plan_id: string;
+  plan_name: string;
+  amount_inr: number;
+  status: string;
+  provider: string;
+  order_id: string | null;
+  payment_id: string | null;
+  created_at: string | null;
+}
+
+// -------------------------------------------------------- sessions/backtest
+export interface TradingSession {
+  name: string;
+  active: boolean;
+  open_utc: string;
+  close_utc: string;
+  minutes_to_open: number;
+  minutes_to_close: number;
+}
+
+export interface SessionSnapshot {
+  utc_time: string;
+  sessions: TradingSession[];
+  active: string[];
+  liquidity: string;
+  tradeable: boolean;
+  note: string;
+  overlap_active: boolean;
+  minutes_to_overlap: number;
+}
+
+export interface BacktestTrade {
+  time: number;
+  direction: string;
+  entry: number;
+  exit: number;
+  sl: number;
+  tp: number;
+  pnl: number;
+  r_multiple: number;
+  confidence: number;
+  exit_reason: string;
+  hold_minutes: number;
+}
+
+export interface BacktestPoint {
+  time: number;
+  equity: number;
+}
+
+export interface BacktestResult {
+  timeframe: string;
+  bars_tested: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  net_pnl: number;
+  return_pct: number;
+  profit_factor: number;
+  avg_r: number;
+  best: number;
+  worst: number;
+  max_drawdown_pct: number;
+  avg_hold_minutes: number;
+  exit_reasons: Record<string, number>;
+  equity_curve: BacktestPoint[];
+  trade_list: BacktestTrade[];
+  note: string;
+  starting_equity: number;
+  generated_at: string | null;
+  settings_used: Record<string, number>;
+}
+
+export const rupees = (v: number | null | undefined): string =>
+  v === null || v === undefined || Number.isNaN(v)
+    ? "—"
+    : `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 export const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h"] as const;
 

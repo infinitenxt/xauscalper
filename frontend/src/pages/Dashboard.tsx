@@ -1,9 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, Info, X } from "lucide-react";
+import { Check, Info, LogOut, ShieldCheck, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { useLogout, useMe } from "@/hooks/useAuth";
+import { ApiError } from "@/lib/api";
 import { Toaster } from "@/components/ui/sonner";
+import BacktestPanel from "@/components/BacktestPanel";
 import PriceChart from "@/components/PriceChart";
+import SessionBar from "@/components/SessionBar";
 import SettingsPanel from "@/components/SettingsPanel";
 import SignalBanner from "@/components/SignalBanner";
 import SignalPanel from "@/components/SignalPanel";
@@ -52,6 +58,9 @@ export default function Dashboard() {
   const [timeframe, setTimeframe] = useState("1m");
   const [speechOn, setSpeech] = useState(false);
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const { data: me } = useMe();
+  const logout = useLogout();
 
   useEffect(() => setSpeech(isSpeechOn()), []);
 
@@ -70,6 +79,14 @@ export default function Dashboard() {
   });
 
   const data = dash.isError ? undefined : dash.data;
+
+  // Subscription expiring mid-session, or the other device signing us out.
+  useEffect(() => {
+    const err = dash.error;
+    if (!(err instanceof ApiError)) return;
+    if (err.status === 402) navigate("/subscribe", { replace: true });
+    if (err.status === 401) navigate("/login", { replace: true });
+  }, [dash.error, navigate]);
 
   const closeTrade = useMutation({
     mutationFn: (id: string) => apiPost<Trade>(`/trades/${id}/close`),
@@ -259,7 +276,44 @@ export default function Dashboard() {
               onRestoreDefaults={() => restoreDefaults.mutate()}
             />
           }
+          userSlot={
+            <div className="flex items-center gap-2" data-testid="user-menu">
+              <div className="hidden text-right leading-tight sm:block">
+                <div className="text-[10px] text-slate-400" data-testid="user-menu-name">
+                  {me?.username ?? "—"}
+                </div>
+                <div className="text-[9px] text-slate-600" data-testid="user-menu-plan">
+                  {me?.role === "admin"
+                    ? "admin"
+                    : `${me?.subscription.plan_name ?? "no plan"} · ${me?.subscription.days_left ?? 0}d`}
+                </div>
+              </div>
+              {me?.role === "admin" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate("/admin")}
+                  data-testid="admin-link-button"
+                  className="border-slate-700 text-slate-300 transition-colors duration-150 hover:text-amber-300"
+                >
+                  <ShieldCheck className="size-3.5" />
+                  Admin
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => logout.mutate()}
+                data-testid="logout-button"
+                className="border-slate-700 text-slate-300 transition-colors duration-150 hover:text-rose-300"
+              >
+                <LogOut className="size-3.5" />
+              </Button>
+            </div>
+          }
         />
+
+        <SessionBar sessions={data?.sessions} filterOn={data?.config.session_filter_enabled ?? true} />
 
         <SignalBanner
           signal={data?.signal}
@@ -363,6 +417,8 @@ export default function Dashboard() {
             </span>
           </p>
         </section>
+
+        <BacktestPanel />
 
         <TradeHistory trades={data?.history} />
       </div>

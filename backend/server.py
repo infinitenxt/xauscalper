@@ -22,7 +22,9 @@ from lib.db import client, db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from lib import engine, market
+    import seed
 
+    await seed.run()
     engine.start()
     yield
     await engine.stop()
@@ -63,8 +65,16 @@ async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
 
+from routers.admin import router as admin_router  # noqa: E402
+from routers.analysis import router as analysis_router  # noqa: E402
+from routers.auth_routes import router as auth_router  # noqa: E402
+from routers.billing import router as billing_router  # noqa: E402
 from routers.trading import router as trading_router  # noqa: E402
 
+api_router.include_router(auth_router)
+api_router.include_router(billing_router)
+api_router.include_router(admin_router)
+api_router.include_router(analysis_router)
 api_router.include_router(trading_router)
 
 # Include the router in the main app
