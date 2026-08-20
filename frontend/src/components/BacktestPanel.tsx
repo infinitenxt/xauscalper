@@ -162,6 +162,66 @@ export default function BacktestPanel() {
             </div>
           ) : null}
 
+          <div className="space-y-2" data-testid="backtest-session-split">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Session split — London / New York / Asian
+              </h3>
+              {r?.best_session ? (
+                <p className="text-[10px] text-slate-500" data-testid="backtest-session-verdict">
+                  Best: <span className="text-emerald-400">{r.best_session}</span>
+                  {r.worst_session && r.worst_session !== r.best_session ? (
+                    <>
+                      {" · "}Worst: <span className="text-rose-400">{r.worst_session}</span>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+            </div>
+            {(r?.session_breakdown ?? []).length ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {(r?.session_breakdown ?? []).map((s) => {
+                  const up = s.net_pnl >= 0;
+                  return (
+                    <div
+                      key={s.session}
+                      data-testid={`backtest-session-${s.session.replace(/\s+/g, "-").toLowerCase()}`}
+                      className="rounded border border-slate-800 bg-slate-950/50 p-2.5 transition-colors duration-150 hover:border-slate-700"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-200">{s.session}</span>
+                        <span
+                          className={cn(
+                            "tabular-nums text-[11px] font-semibold",
+                            up ? "text-emerald-400" : "text-rose-400",
+                          )}
+                        >
+                          {money(s.net_pnl)}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-1 overflow-hidden rounded bg-slate-800">
+                        <div
+                          className={cn("h-full transition-[width] duration-500", up ? "bg-emerald-500" : "bg-rose-500")}
+                          style={{ width: `${Math.min(100, Math.max(4, s.share_pct))}%` }}
+                        />
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-4 gap-1 text-[10px] text-slate-500">
+                        <span>{s.trades} trades</span>
+                        <span>{fmt(s.win_rate, 1)}% win</span>
+                        <span>PF {fmt(s.profit_factor, 2)}</span>
+                        <span>{signed(s.avg_r, 2)} R</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500" data-testid="backtest-session-empty">
+                No trades were triggered in this window, so there is nothing to split by session yet.
+              </p>
+            )}
+          </div>
+
           {Object.keys(r?.exit_reasons ?? {}).length ? (
             <div className="flex flex-wrap gap-1.5" data-testid="backtest-exit-reasons">
               {Object.entries(r?.exit_reasons ?? {}).map(([reason, count]) => (

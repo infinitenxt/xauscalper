@@ -186,3 +186,32 @@ balance (subscribers only).
   correct behaviour, not a bug.
 - The 451 futures fallback and REST-instead-of-WebSocket are intentional
   deviations (see above).
+
+## Update — per-user wallets, presence, session backtest split
+- Every trading route (`/api/dashboard`, `/api/wallet`, `/api/trades`, `/api/engine/*`,
+  `/api/presence`, `/api/backtest`) is scoped to the signed-in subscriber; each user gets
+  their own $10,000 paper wallet and private trade history (`trades.user_id`).
+- Presence: `db.presence.last_seen` + `PRESENCE_WINDOW=25s`. The engine always manages
+  exits (TP/SL/trail/timeout) for open trades, but only OPENS new trades for users seen
+  within the window. Frontend pings `POST /api/presence` every 10s while the tab is
+  visible and on visibilitychange; `guards.present` drives the header chip
+  ("Live · entries armed" / "Idle · exits only", testid `presence-indicator`).
+- Backtest returns `session_breakdown[]` (Asian, London, London × New York, New York,
+  Off-session) plus `best_session`/`worst_session`, rendered in BacktestPanel
+  (testid `backtest-session-split`).
+- Frontend `lib/types.ts` mirrors the updated Pydantic models (Trade.user_id/session/
+  liquidity, Guards.present, EngineHealth, EngineConfig.presence_window_seconds,
+  SessionSplit).
+
+## Update — admin identity, password changes, invite-only sign-up
+- Seeded admin is now `Admin` / `admin@infinitenxt.com` / `Harsh@10576`
+  (seed.py migrates the legacy `admin@goldterminal.app` doc in place and clears its sessions).
+- `POST /api/auth/password` {current_password,new_password}: self-service change, revokes
+  other sessions and re-issues the caller's cookie. UI: `ChangePasswordDialog` in the
+  dashboard and admin headers (testid `change-password-open-button`).
+- `POST /api/admin/users/{id}/password` {new_password}: admin force-reset (Users tab →
+  `reset-password-button`).
+- Invite-only registration: `db.invites` {email, note, used, invited_by, created_at, used_at}.
+  Admin CRUD at `GET/POST /api/admin/invites`, `DELETE /api/admin/invites/{email}`
+  (Invites tab). `POST /api/auth/register` returns 403 for an uninvited email, 409 for a
+  used invite, and marks the invite used on success. AdminStats gains `invites_pending`.

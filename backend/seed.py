@@ -14,9 +14,12 @@ from lib.db import db
 
 logger = logging.getLogger("seed")
 
-ADMIN_EMAIL = "admin@goldterminal.app"
-ADMIN_USERNAME = "admin"
+ADMIN_EMAIL = "admin@infinitenxt.com"
+ADMIN_USERNAME = "Admin"
 ADMIN_PASSWORD = "Harsh@10576"
+# Older builds seeded these — migrated in-place to the values above.
+LEGACY_ADMIN_EMAILS = ["admin@goldterminal.app"]
+LEGACY_ADMIN_USERNAMES = ["admin"]
 
 PLANS: List[Dict[str, Any]] = [
     {
@@ -78,22 +81,46 @@ SITE: Dict[str, Any] = {
 
 
 async def run() -> None:
-    # --- admin account
-    existing = await db.users.find_one({"username": ADMIN_USERNAME})
+    # --- migrate pre-multi-user data: wallets/trades without an owner
+    await db.trades.delete_many({"user_id": {"$exists": False}})
+    await db.wallets.delete_many({"user_id": {"$exists": False}})
+    await db.wallet.drop()  # legacy single shared wallet collection
+
+    # --- admin account (create, or migrate the legacy seeded admin in place)
+    existing = await db.users.find_one({"email": ADMIN_EMAIL})
     if not existing:
-        await db.users.insert_one(
-            {
-                "id": str(uuid.uuid4()),
-                "email": ADMIN_EMAIL,
-                "username": ADMIN_USERNAME,
-                "password_hash": auth.hash_password(ADMIN_PASSWORD),
-                "role": "admin",
-                "is_active": True,
-                "created_at": auth.now(),
-                "subscription": {"status": "none"},
-            }
+        legacy = await db.users.find_one(
+            {"$or": [{"email": {"$in": LEGACY_ADMIN_EMAILS}}, {"username": {"$in": LEGACY_ADMIN_USERNAMES}}]}
         )
-        logger.info("seeded admin account %s", ADMIN_USERNAME)
+        if legacy:
+            await db.users.update_one(
+                {"id": legacy["id"]},
+                {
+                    "$set": {
+                        "email": ADMIN_EMAIL,
+                        "username": ADMIN_USERNAME,
+                        "password_hash": auth.hash_password(ADMIN_PASSWORD),
+                        "role": "admin",
+                        "is_active": True,
+                    }
+                },
+            )
+            await db.sessions.delete_many({"user_id": legacy["id"]})
+            logger.info("migrated legacy admin account to %s", ADMIN_EMAIL)
+        else:
+            await db.users.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "email": ADMIN_EMAIL,
+                    "username": ADMIN_USERNAME,
+                    "password_hash": auth.hash_password(ADMIN_PASSWORD),
+                    "role": "admin",
+                    "is_active": True,
+                    "created_at": auth.now(),
+                    "subscription": {"status": "none"},
+                }
+            )
+            logger.info("seeded admin account %s", ADMIN_EMAIL)
     elif existing.get("role") != "admin":
         await db.users.update_one({"id": existing["id"]}, {"$set": {"role": "admin", "is_active": True}})
 
@@ -113,5 +140,9 @@ async def run() -> None:
         await db.sessions.create_index("token", unique=True)
         await db.sessions.create_index("user_id")
         await db.plans.create_index("id", unique=True)
+        await db.wallets.create_index("user_id", unique=True)
+        await db.trades.create_index([("user_id", 1), ("status", 1)])
+        await db.presence.create_index("user_id", unique=True)
+        await db.invites.create_index("email", unique=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("index creation skipped: %s", exc)

@@ -10,8 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from lib import auth
 from lib.db import db
 from models.accounts import (
+    AdminPasswordReset,
     AdminStats,
     GrantRequest,
+    InviteCreate,
+    InviteRow,
     PaymentRow,
     Plan,
     PlanPatch,
@@ -77,7 +80,44 @@ async def stats() -> AdminStats:
         revenue_inr=round(sum(float(p.get("amount_inr") or 0) for p in paid), 2),
         payments=len(paid),
         plans=await db.plans.count_documents({}),
+        invites_pending=await db.invites.count_documents({"used": {"$ne": True}}),
     )
+
+
+# -------------------------------------------------------------------- invites
+@router.get("/invites", response_model=List[InviteRow])
+async def list_invites(limit: int = Query(200, ge=1, le=500)) -> List[InviteRow]:
+    docs = await db.invites.find({}).sort("created_at", -1).to_list(limit)
+    return [InviteRow(**{k: v for k, v in d.items() if k not in ("_id", "user_id")}) for d in docs]
+
+
+@router.post("/invites", response_model=InviteRow, status_code=201)
+async def create_invite(body: InviteCreate, request: Request) -> InviteRow:
+    """Only invited emails can register an account."""
+    me = await auth.require_admin(request)
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=409, detail="that email already has an account")
+    if await db.invites.find_one({"email": email}):
+        raise HTTPException(status_code=409, detail="that email is already invited")
+    doc = {
+        "email": email,
+        "note": body.note.strip(),
+        "used": False,
+        "invited_by": me.get("email", ""),
+        "created_at": auth.now(),
+        "used_at": None,
+    }
+    await db.invites.insert_one(dict(doc))
+    return InviteRow(**doc)
+
+
+@router.delete("/invites/{email}")
+async def delete_invite(email: str) -> Dict[str, str]:
+    result = await db.invites.delete_one({"email": email.lower().strip()})
+    if not result.deleted_count:
+        raise HTTPException(status_code=404, detail="invite not found")
+    return {"message": "invite revoked"}
 
 
 # ---------------------------------------------------------------------- users
@@ -153,6 +193,19 @@ async def manage_subscription(user_id: str, body: GrantRequest) -> UserPublic:
 
     fresh = await db.users.find_one({"id": user_id})
     return UserPublic(**auth.public_user({k: v for k, v in (fresh or {}).items() if k != "_id"}))
+
+
+@router.post("/users/{user_id}/password")
+async def reset_user_password(user_id: str, body: AdminPasswordReset) -> Dict[str, str]:
+    """Force-set any account's password and sign its devices out."""
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    await db.users.update_one(
+        {"id": user_id}, {"$set": {"password_hash": auth.hash_password(body.new_password)}}
+    )
+    await db.sessions.delete_many({"user_id": user_id})
+    return {"message": f"password reset for {target.get('email', user_id)}"}
 
 
 @router.get("/sessions", response_model=List[SessionRow])

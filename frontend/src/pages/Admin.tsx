@@ -8,6 +8,7 @@ import {
   KeyRound,
   Layers,
   LogOut,
+  MailPlus,
   Monitor,
   Users,
 } from "lucide-react";
@@ -26,11 +27,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { errorText, useLogout, useMe } from "@/hooks/useAuth";
 import { rupees } from "@/lib/types";
 import type {
   AdminStats,
+  InviteRow,
   PaymentRow,
   Plan,
   SessionRow,
@@ -58,6 +61,29 @@ export default function Admin() {
   const site = useQuery({ queryKey: ["admin", "site"], queryFn: () => apiGet<SiteSettings>("/admin/site-settings") });
   const sessions = useQuery({ queryKey: ["admin", "sessions"], queryFn: () => apiGet<SessionRow[]>("/admin/sessions") });
   const payments = useQuery({ queryKey: ["admin", "payments"], queryFn: () => apiGet<PaymentRow[]>("/admin/payments") });
+  const invites = useQuery({ queryKey: ["admin", "invites"], queryFn: () => apiGet<InviteRow[]>("/admin/invites") });
+
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteNote, setInviteNote] = useState("");
+
+  const sendInvite = useMutation({
+    mutationFn: (body: { email: string; note: string }) => apiPost<InviteRow>("/admin/invites", body),
+    onSuccess: (row) => { toast.success(`${row.email} can now create an account`); setInviteEmail(""); setInviteNote(""); refresh(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+
+  const revokeInvite = useMutation({
+    mutationFn: (email: string) => apiDelete<{ message: string }>(`/admin/invites/${encodeURIComponent(email)}`),
+    onSuccess: () => { toast.success("Invite revoked"); refresh(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      apiPost<{ message: string }>(`/admin/users/${id}/password`, { new_password: password }),
+    onSuccess: (res) => { toast.success(res.message); refresh(); },
+    onError: (e) => toast.error(errorText(e)),
+  });
 
   const patchUser = useMutation({
     mutationFn: ({ id, body }: { id: string; body: { is_active?: boolean; role?: string } }) =>
@@ -143,6 +169,7 @@ export default function Admin() {
             <p className="text-[11px] text-slate-500">Signed in as {me?.username} · {me?.email}</p>
           </div>
           <div className="flex items-center gap-2">
+            <ChangePasswordDialog />
             <Button variant="outline" size="sm" onClick={() => navigate("/")} data-testid="back-to-terminal-button" className="border-slate-700 text-slate-300">
               <ArrowLeft className="size-3.5" /> Terminal
             </Button>
@@ -160,7 +187,7 @@ export default function Admin() {
             ["Admins", s?.admins ?? "—"],
             ["Signed in", s?.signed_in_now ?? "—"],
             ["New (7d)", s?.new_users_7d ?? "—"],
-            ["Payments", s?.payments ?? "—"],
+            ["Invites", s?.invites_pending ?? "—"],
             ["Revenue", s ? rupees(s.revenue_inr) : "—"],
           ].map(([k, v]) => (
             <div key={String(k)} className="rounded border border-slate-800 bg-[#111827] p-3">
@@ -173,6 +200,7 @@ export default function Admin() {
         <Tabs defaultValue="users">
           <TabsList className="bg-[#111827]">
             <TabsTrigger value="users" data-testid="tab-users"><Users className="size-3.5" /> Users</TabsTrigger>
+            <TabsTrigger value="invites" data-testid="tab-invites"><MailPlus className="size-3.5" /> Invites</TabsTrigger>
             <TabsTrigger value="plans" data-testid="tab-plans"><Layers className="size-3.5" /> Plans</TabsTrigger>
             <TabsTrigger value="payments" data-testid="tab-payments"><CreditCard className="size-3.5" /> Payments</TabsTrigger>
             <TabsTrigger value="keys" data-testid="tab-keys"><KeyRound className="size-3.5" /> Razorpay</TabsTrigger>
@@ -250,6 +278,14 @@ export default function Admin() {
                           onClick={() => patchUser.mutate({ id: u.id, body: { role: u.role === "admin" ? "user" : "admin" } })} data-testid="toggle-role-button">
                           {u.role === "admin" ? "demote" : "promote"}
                         </Button>
+                        <Button size="sm" variant="outline" className="h-6 border-slate-700 px-1.5 text-[10px] text-amber-300"
+                          onClick={() => {
+                            const pw = window.prompt(`New password for ${u.email} (min 8 characters)`);
+                            if (pw && pw.length >= 8) resetPassword.mutate({ id: u.id, password: pw });
+                            else if (pw !== null) toast.error("Password must be at least 8 characters.");
+                          }} data-testid="reset-password-button">
+                          reset password
+                        </Button>
                         <Button size="sm" variant="outline" className="h-6 border-slate-700 px-1.5 text-[10px] text-rose-300"
                           onClick={() => removeUser.mutate(u.id)} data-testid="delete-user-button">
                           delete
@@ -260,6 +296,74 @@ export default function Admin() {
                 ))}
               </TableBody>
             </Table>
+          </TabsContent>
+
+          {/* -------------------------------------------------------- invites */}
+          <TabsContent value="invites" className="rounded-md border border-slate-800 bg-[#111827] p-4">
+            <div className="space-y-4" data-testid="invites-panel">
+              <div className="rounded border border-amber-900/40 bg-amber-950/20 p-2.5 text-[11px] text-amber-200/80">
+                Sign-up is invite-only. Only the emails listed here can create an account — anyone
+                else gets turned away at registration.
+              </div>
+              <form
+                className="flex flex-wrap items-end gap-2"
+                data-testid="invite-form"
+                onSubmit={(e) => { e.preventDefault(); sendInvite.mutate({ email: inviteEmail.trim(), note: inviteNote.trim() }); }}
+              >
+                <div>
+                  <Label className="text-[11px] text-slate-300">Email to invite</Label>
+                  <Input type="email" required value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="trader@example.com" data-testid="invite-email-input"
+                    className="mt-1 w-64 border-slate-700 bg-slate-950 text-slate-100" />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-slate-300">Note (optional)</Label>
+                  <Input value={inviteNote} onChange={(e) => setInviteNote(e.target.value)}
+                    placeholder="Beta tester" data-testid="invite-note-input"
+                    className="mt-1 w-56 border-slate-700 bg-slate-950 text-slate-100" />
+                </div>
+                <Button type="submit" size="sm" disabled={sendInvite.isPending} data-testid="invite-submit-button">
+                  <MailPlus className="size-3.5" /> Add invite
+                </Button>
+              </form>
+
+              {(invites.data ?? []).length === 0 ? (
+                <p className="text-[12px] text-slate-400" data-testid="invites-empty">
+                  No invites yet. Add an email above and that person can register at /register.
+                </p>
+              ) : (
+                <Table data-testid="invites-table">
+                  <TableHeader>
+                    <TableRow className="border-slate-800 hover:bg-transparent">
+                      {["Email", "Note", "State", "Invited by", "Added", "Action"].map((h) => (
+                        <TableHead key={h} className="h-8 text-[10px] uppercase tracking-wider text-slate-500">{h}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(invites.data ?? []).map((i) => (
+                      <TableRow key={i.email} className="border-slate-800 text-[11px]" data-testid="invite-row">
+                        <TableCell className="text-slate-200">{i.email}</TableCell>
+                        <TableCell className="text-slate-400">{i.note || "—"}</TableCell>
+                        <TableCell>
+                          <span className={cn("rounded px-1.5 py-0.5 text-[10px]", i.used ? "bg-slate-800 text-slate-400" : "bg-emerald-950 text-emerald-300")} data-testid="invite-state">
+                            {i.used ? "used" : "pending"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-[10px] text-slate-500">{i.invited_by || "—"}</TableCell>
+                        <TableCell className="text-slate-400">{i.created_at ? new Date(i.created_at).toLocaleString() : "—"}</TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="outline" className="h-6 border-slate-700 px-1.5 text-[10px] text-rose-300"
+                            onClick={() => revokeInvite.mutate(i.email)} data-testid="revoke-invite-button">
+                            revoke
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
           </TabsContent>
 
           {/* ---------------------------------------------------------- plans */}

@@ -75,7 +75,7 @@ export default function AuthPage({ mode }: Props) {
             <p className="mt-0.5 text-[11px] text-slate-500">
               {isLogin
                 ? "One active login per account — signing in here signs out your other device."
-                : "A subscription unlocks the live terminal after sign-up."}
+                : "Sign-up is invite-only — use the email address the admin invited. A subscription unlocks the live terminal."}
             </p>
           </div>
 
@@ -89,7 +89,7 @@ export default function AuthPage({ mode }: Props) {
               onChange={(e) => setEmail(e.target.value)}
               data-testid="auth-email-input"
               className="mt-1 border-slate-700 bg-slate-950 text-slate-100"
-              placeholder="you@example.com"
+              placeholder={isLogin ? "you@example.com" : "the email you were invited with"}
             />
           </div>
 

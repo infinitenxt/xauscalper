@@ -8,6 +8,7 @@ import { useLogout, useMe } from "@/hooks/useAuth";
 import { ApiError } from "@/lib/api";
 import { Toaster } from "@/components/ui/sonner";
 import BacktestPanel from "@/components/BacktestPanel";
+import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import PriceChart from "@/components/PriceChart";
 import SessionBar from "@/components/SessionBar";
 import SettingsPanel from "@/components/SettingsPanel";
@@ -79,6 +80,25 @@ export default function Dashboard() {
   });
 
   const data = dash.isError ? undefined : dash.data;
+  const present = data?.guards.present ?? false;
+
+  // Presence heartbeat: the engine only opens NEW trades for users seen recently.
+  // Polling /dashboard already refreshes it, but background tabs get throttled, so
+  // ping explicitly while the tab is visible and let presence lapse when it is not.
+  useEffect(() => {
+    const ping = () => {
+      if (document.visibilityState === "visible") {
+        void apiPost("/presence").catch(() => undefined);
+      }
+    };
+    ping();
+    const id = window.setInterval(ping, 10_000);
+    document.addEventListener("visibilitychange", ping);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", ping);
+    };
+  }, []);
 
   // Subscription expiring mid-session, or the other device signing us out.
   useEffect(() => {
@@ -278,6 +298,28 @@ export default function Dashboard() {
           }
           userSlot={
             <div className="flex items-center gap-2" data-testid="user-menu">
+              <span
+                data-testid="presence-indicator"
+                title={
+                  present
+                    ? "Dashboard is open — the engine may open new trades on your account"
+                    : "Dashboard idle — open trades are still managed, but no new trades will open"
+                }
+                className={cn(
+                  "flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] transition-colors duration-200",
+                  present
+                    ? "border-emerald-700/60 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-700 bg-slate-900 text-slate-500",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    present ? "animate-pulse bg-emerald-400" : "bg-slate-600",
+                  )}
+                />
+                {present ? "Live · entries armed" : "Idle · exits only"}
+              </span>
               <div className="hidden text-right leading-tight sm:block">
                 <div className="text-[10px] text-slate-400" data-testid="user-menu-name">
                   {me?.username ?? "—"}
@@ -288,6 +330,7 @@ export default function Dashboard() {
                     : `${me?.subscription.plan_name ?? "no plan"} · ${me?.subscription.days_left ?? 0}d`}
                 </div>
               </div>
+              <ChangePasswordDialog compact />
               {me?.role === "admin" ? (
                 <Button
                   variant="outline"

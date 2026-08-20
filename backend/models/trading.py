@@ -119,10 +119,13 @@ class Wallet(BaseModel):
 
 class Trade(BaseModel):
     id: str
+    user_id: str = ""
     symbol: str
     direction: str
     status: str
     timeframe: str
+    session: str = ""
+    liquidity: str = ""
     entry: float
     sl: float
     tp: float
@@ -193,6 +196,7 @@ class EngineConfig(BaseModel):
     starting_balance: float
     timeframes: List[str]
     loop_seconds: float
+    presence_window_seconds: float = 25.0
     disclaimer: str
 
 
@@ -228,6 +232,20 @@ class Guards(BaseModel):
     day_pnl: float = 0.0
     trades_last_hour: int = 0
     loss_streak: int = 0
+    present: bool = False
+
+
+class EngineHealth(BaseModel):
+    running: bool = False
+    watchdog_running: bool = False
+    started_at: Optional[str] = None
+    cycles: int = 0
+    last_cycle_at: Optional[str] = None
+    last_error: str = ""
+    restarts: int = 0
+    loop_seconds: float = 3.0
+    presence_window_seconds: float = 25.0
+    server_time: Optional[str] = None
 
 
 class Dashboard(BaseModel):
@@ -240,6 +258,7 @@ class Dashboard(BaseModel):
     config: EngineConfig
     guards: Guards
     sessions: "SessionSnapshotRef"
+    engine: EngineHealth
     server_time: str
 
 

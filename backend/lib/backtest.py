@@ -11,9 +11,10 @@ conservative, and are still a simulation — not a promise of live behaviour.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from lib import strategy
+from lib import market_sessions, strategy
 from lib.market import INTERVAL_MINUTES
 
 WARMUP = 210
@@ -26,6 +27,7 @@ def _empty(reason: str) -> Dict[str, Any]:
         "return_pct": 0.0, "profit_factor": 0.0, "avg_r": 0.0, "best": 0.0,
         "worst": 0.0, "max_drawdown_pct": 0.0, "avg_hold_minutes": 0.0,
         "exit_reasons": {}, "equity_curve": [], "trade_list": [], "note": reason,
+        "session_breakdown": [], "best_session": "", "worst_session": "",
     }
 
 
@@ -156,6 +158,9 @@ def run(
                 "confidence": signal["confidence"],
                 "exit_reason": exit_reason,
                 "hold_minutes": bars_held * tf_min,
+                "session": market_sessions.classify(
+                    datetime.fromtimestamp(candles[i]["time"] / 1000, tz=timezone.utc)
+                ),
             }
         )
         curve.append({"time": candles[i + bars_held]["time"], "equity": round(equity, 2)})
@@ -174,6 +179,31 @@ def run(
         out["timeframe"] = timeframe
         return out
 
+    # --- split performance by trading session (entry time, UTC)
+    breakdown = []
+    for bucket in market_sessions.BUCKETS:
+        rows = [t for t in trades if t["session"] == bucket]
+        if not rows:
+            continue
+        b_wins = [t for t in rows if t["pnl"] >= 0]
+        b_gross_win = sum(t["pnl"] for t in b_wins)
+        b_gross_loss = -sum(t["pnl"] for t in rows if t["pnl"] < 0)
+        breakdown.append(
+            {
+                "session": bucket,
+                "trades": len(rows),
+                "wins": len(b_wins),
+                "losses": len(rows) - len(b_wins),
+                "win_rate": round(len(b_wins) / len(rows) * 100, 1),
+                "net_pnl": round(sum(t["pnl"] for t in rows), 2),
+                "avg_r": round(sum(t["r_multiple"] for t in rows) / len(rows), 2),
+                "profit_factor": round(b_gross_win / b_gross_loss, 2) if b_gross_loss else round(b_gross_win, 2),
+                "share_pct": round(len(rows) / total * 100, 1),
+            }
+        )
+    best = max(breakdown, key=lambda b: b["net_pnl"]) if breakdown else None
+    worst = min(breakdown, key=lambda b: b["net_pnl"]) if breakdown else None
+
     return {
         "timeframe": timeframe,
         "bars_tested": n - WARMUP,
@@ -190,6 +220,9 @@ def run(
         "max_drawdown_pct": round(max_dd, 2),
         "avg_hold_minutes": round(sum(t["hold_minutes"] for t in trades) / total, 1),
         "exit_reasons": reasons,
+        "session_breakdown": breakdown,
+        "best_session": best["session"] if best else "",
+        "worst_session": worst["session"] if worst else "",
         "equity_curve": curve,
         "trade_list": trades[-40:],
         "note": (

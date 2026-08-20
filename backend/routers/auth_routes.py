@@ -8,7 +8,13 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from lib import auth
 from lib.db import db
-from models.accounts import AuthResponse, LoginRequest, RegisterRequest, UserPublic
+from models.accounts import (
+    AuthResponse,
+    LoginRequest,
+    PasswordChangeRequest,
+    RegisterRequest,
+    UserPublic,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,6 +30,14 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
         raise HTTPException(status_code=403, detail="registration is currently closed")
 
     email = body.email.lower().strip()
+    invite = await db.invites.find_one({"email": email})
+    if not invite:
+        raise HTTPException(
+            status_code=403,
+            detail="this email has not been invited — ask the admin to send you an invite first",
+        )
+    if invite.get("used"):
+        raise HTTPException(status_code=409, detail="that invite has already been used")
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="that email is already registered")
     if await db.users.find_one({"username": body.username}):
@@ -54,6 +68,9 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
         "subscription": subscription,
     }
     await db.users.insert_one(dict(user))
+    await db.invites.update_one(
+        {"email": email}, {"$set": {"used": True, "used_at": auth.now(), "user_id": user["id"]}}
+    )
     token = await auth.create_session(user["id"], request)
     auth.set_cookie(response, token)
     return AuthResponse(
@@ -96,3 +113,23 @@ async def logout(request: Request, response: Response) -> Dict[str, str]:
 async def me(request: Request) -> UserPublic:
     user = await auth.require_user(request)
     return UserPublic(**auth.public_user(user))
+
+
+@router.post("/password")
+async def change_password(
+    body: PasswordChangeRequest, request: Request, response: Response
+) -> Dict[str, str]:
+    """Change your own password. Every other device is signed out; this one stays in."""
+    user = await auth.require_user(request)
+    fresh = await db.users.find_one({"id": user["id"]}) or {}
+    if not auth.verify_password(body.current_password, fresh.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="your current password is incorrect")
+    if body.current_password == body.new_password:
+        raise HTTPException(status_code=400, detail="the new password must be different")
+    await db.users.update_one(
+        {"id": user["id"]}, {"$set": {"password_hash": auth.hash_password(body.new_password)}}
+    )
+    await db.sessions.delete_many({"user_id": user["id"]})
+    token = await auth.create_session(user["id"], request)
+    auth.set_cookie(response, token)
+    return {"message": "Password updated. Other devices have been signed out."}

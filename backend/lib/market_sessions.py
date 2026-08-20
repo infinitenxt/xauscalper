@@ -39,6 +39,26 @@ def _minutes_until(minute_of_day: int, target_h: int) -> int:
     return delta if delta > 0 else delta + 1440
 
 
+def classify(dt: datetime) -> str:
+    """Which session bucket an entry timestamp belongs to (for backtest splits)."""
+    mod = dt.hour * 60 + dt.minute
+    london = _in_session(mod, 7, 16)
+    ny = _in_session(mod, 12, 21)
+    asian = _in_session(mod, 0, 9) or _in_session(mod, 21, 6)
+    if london and ny:
+        return "London × New York"
+    if london:
+        return "London"
+    if ny:
+        return "New York"
+    if asian:
+        return "Asian"
+    return "Off-session"
+
+
+BUCKETS = ["Asian", "London", "London × New York", "New York", "Off-session"]
+
+
 def snapshot(at: datetime | None = None) -> Dict[str, Any]:
     now = at or datetime.now(timezone.utc)
     mod = now.hour * 60 + now.minute

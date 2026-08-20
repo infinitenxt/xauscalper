@@ -112,10 +112,13 @@ export interface Wallet {
 
 export interface Trade {
   id: string;
+  user_id: string;
   symbol: string;
   direction: string;
   status: string;
   timeframe: string;
+  session: string;
+  liquidity: string;
   entry: number;
   sl: number;
   tp: number;
@@ -185,6 +188,7 @@ export interface EngineConfig {
   starting_balance: number;
   timeframes: string[];
   loop_seconds: number;
+  presence_window_seconds: number;
   disclaimer: string;
 }
 
@@ -223,6 +227,20 @@ export interface Guards {
   day_pnl: number;
   trades_last_hour: number;
   loss_streak: number;
+  present: boolean;
+}
+
+export interface EngineHealth {
+  running: boolean;
+  watchdog_running: boolean;
+  started_at: string | null;
+  cycles: number;
+  last_cycle_at: string | null;
+  last_error: string;
+  restarts: number;
+  loop_seconds: number;
+  presence_window_seconds: number;
+  server_time: string | null;
 }
 
 export interface Dashboard {
@@ -235,6 +253,7 @@ export interface Dashboard {
   config: EngineConfig;
   guards: Guards;
   sessions: SessionSnapshot;
+  engine: EngineHealth;
   server_time: string;
 }
 
@@ -314,6 +333,16 @@ export interface AdminStats {
   revenue_inr: number;
   payments: number;
   plans: number;
+  invites_pending: number;
+}
+
+export interface InviteRow {
+  email: string;
+  note: string;
+  used: boolean;
+  invited_by: string;
+  created_at: string | null;
+  used_at: string | null;
 }
 
 export interface SessionRow {
@@ -380,6 +409,18 @@ export interface BacktestPoint {
   equity: number;
 }
 
+export interface SessionSplit {
+  session: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  net_pnl: number;
+  avg_r: number;
+  profit_factor: number;
+  share_pct: number;
+}
+
 export interface BacktestResult {
   timeframe: string;
   bars_tested: number;
@@ -396,6 +437,9 @@ export interface BacktestResult {
   max_drawdown_pct: number;
   avg_hold_minutes: number;
   exit_reasons: Record<string, number>;
+  session_breakdown: SessionSplit[];
+  best_session: string;
+  worst_session: string;
   equity_curve: BacktestPoint[];
   trade_list: BacktestTrade[];
   note: string;

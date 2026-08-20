@@ -22,6 +22,11 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class SubscriptionInfo(BaseModel):
     plan_id: Optional[str] = None
     plan_name: Optional[str] = None
@@ -134,6 +139,24 @@ class GrantRequest(BaseModel):
     revoke: bool = False
 
 
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class InviteCreate(BaseModel):
+    email: EmailStr
+    note: str = Field(default="", max_length=200)
+
+
+class InviteRow(BaseModel):
+    email: str
+    note: str = ""
+    used: bool = False
+    invited_by: str = ""
+    created_at: Optional[datetime] = None
+    used_at: Optional[datetime] = None
+
+
 class AdminStats(BaseModel):
     users_total: int
     users_active: int
@@ -144,6 +167,7 @@ class AdminStats(BaseModel):
     revenue_inr: float
     payments: int
     plans: int
+    invites_pending: int = 0
 
 
 class SessionRow(BaseModel):
@@ -203,11 +227,24 @@ class BacktestTrade(BaseModel):
     confidence: float
     exit_reason: str
     hold_minutes: int
+    session: str = ""
 
 
 class BacktestPoint(BaseModel):
     time: int
     equity: float
+
+
+class SessionSplit(BaseModel):
+    session: str
+    trades: int
+    wins: int
+    losses: int
+    win_rate: float
+    net_pnl: float
+    avg_r: float
+    profit_factor: float
+    share_pct: float
 
 
 class BacktestResult(BaseModel):
@@ -226,6 +263,9 @@ class BacktestResult(BaseModel):
     max_drawdown_pct: float
     avg_hold_minutes: float
     exit_reasons: Dict[str, int] = {}
+    session_breakdown: List[SessionSplit] = []
+    best_session: str = ""
+    worst_session: str = ""
     equity_curve: List[BacktestPoint] = []
     trade_list: List[BacktestTrade] = []
     note: str = ""
