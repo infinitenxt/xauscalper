@@ -1,0 +1,158 @@
+{
+  "theme": {
+    "mode": "dark",
+    "vibe": "MT5 Institutional Dark Terminal / High-Density Quantitative Gold Trading Platform"
+  },
+  "colors": {
+    "surfaces": [
+      {
+        "name": "page",
+        "kind": "solid",
+        "bg": "#0b0e14",
+        "on_bg": "#f1f5f9",
+        "on_bg_muted": "#94a3b8",
+        "roles": {
+          "link": "#38bdf8",
+          "error": "#fb7185",
+          "success": "#34d399",
+          "warning": "#fbbf24"
+        }
+      },
+      {
+        "name": "panel",
+        "kind": "solid",
+        "bg": "#111827",
+        "on_bg": "#f8fafc",
+        "on_bg_muted": "#9ca3af",
+        "roles": {
+          "link": "#38bdf8",
+          "error": "#f43f5e",
+          "success": "#10b981",
+          "warning": "#eab308"
+        }
+      },
+      {
+        "name": "card_header",
+        "kind": "solid",
+        "bg": "#1f2937",
+        "on_bg": "#ffffff",
+        "on_bg_muted": "#d1d5db",
+        "roles": {
+          "gold_accent": "#eab308"
+        }
+      },
+      {
+        "name": "chart_overlay",
+        "kind": "glass",
+        "contrast_against": "#0f172a",
+        "guarantee": "backdrop-blur-md bg-slate-950/80 border border-slate-800/80",
+        "on_bg": "#f8fafc",
+        "on_bg_muted": "#94a3b8",
+        "roles": {
+          "buy_signal": "#10b981",
+          "sell_signal": "#f43f5e",
+          "tp_line": "#10b981",
+          "sl_line": "#f43f5e",
+          "entry_line": "#38bdf8"
+        }
+      },
+      {
+        "name": "badge_buy",
+        "kind": "solid",
+        "bg": "#064e3b",
+        "on_bg": "#a7f3d0",
+        "on_bg_muted": "#6ee7b7"
+      },
+      {
+        "name": "badge_sell",
+        "kind": "solid",
+        "bg": "#881337",
+        "on_bg": "#fecdd3",
+        "on_bg_muted": "#fda4af"
+      },
+      {
+        "name": "badge_gold",
+        "kind": "solid",
+        "bg": "#78350f",
+        "on_bg": "#fef08a",
+        "on_bg_muted": "#fde047"
+      }
+    ],
+    "accent": "#eab308",
+    "on_accent": "#0f172a"
+  },
+  "typography": {
+    "font_heading": "JetBrains Mono Variable",
+    "font_body": "JetBrains Mono Variable",
+    "font_mono": "JetBrains Mono Variable",
+    "scale_px": {
+      "display": 48,
+      "h1": 36,
+      "h2": 24,
+      "h3": 20,
+      "body": 14,
+      "caption": 12
+    },
+    "pairing_rationale": "High-density institutional trading desk style. JetBrains Mono across headlines, metrics, order books, and indicators ensures pristine tabular alignment (tnum), mechanical precision, and fast scanning without cognitive fatigue."
+  },
+  "entry_surfaces": {
+    "/": "Institutional MT5-inspired Gold (XAUUSDT) Futures Trading Terminal with top market ticker bar, main multi-timeframe candlestick chart, signal matrix, wallet/active trade stats, and trade history blotter."
+  },
+  "grids": {
+    "mode": "High Density Grid (MODE B)",
+    "desktop_layout": "grid grid-cols-12 gap-3 p-3 bg-[#0b0e14] min-h-screen",
+    "spans": {
+      "top_ticker_bar": "col-span-12 h-14 bg-[#111827] border border-slate-800 rounded-md p-3 flex items-center justify-between",
+      "main_chart": "col-span-12 lg:col-span-8 row-span-2 min-h-[520px] bg-[#111827] border border-slate-800 rounded-md p-4 flex flex-col",
+      "signal_engine": "col-span-12 lg:col-span-4 bg-[#111827] border border-slate-800 rounded-md p-4 space-y-4",
+      "wallet_and_active_trade": "col-span-12 lg:col-span-4 bg-[#111827] border border-slate-800 rounded-md p-4 space-y-4",
+      "trade_history_blotter": "col-span-12 bg-[#111827] border border-slate-800 rounded-md p-4 space-y-3"
+    }
+  },
+  "layouts": {
+    "header_nav": "Sticky dark terminal bar (`bg-[#111827]/95 backdrop-blur-md border-b border-slate-800 px-4 py-2.5 flex items-center justify-between z-50`) featuring XAUUSDT asset icon, live WebSocket ping indicator, timeframe selector (1m, 5m, 15m, 30m, 1h), and paper wallet equity counter.",
+    "chart_section": "Customized Recharts ComposedChart with candlestick representation (or high/low/close area + bar overlay), moving averages (EMA 20/50), VWAP, Bollinger Bands, and dynamic ReferenceLine markers for Entry (Cyan), SL (Red), and TP (Green).",
+    "signal_panel": "Confidence Dial / Progress Radial Meter showing signal status (BUY / SELL / WAIT) with confidence % (e.g., 88%). Includes collapsible multi-indicator checklist (EMA trend, RSI momentum, MACD cross, Bollinger Squeeze, ATR Volatility, ADX Strength, VWAP bias, S/R Levels, Market Structure).",
+    "active_trade_card": "Real-time P&L status badge with live ticking profit, position size, leverage, entry price, dynamic Trailing Stop bar, auto-timeout timer, and manual Close Trade button.",
+    "trade_history_table": "Dense MT5 trade log table with columns for Trade ID, Direction, Entry/Exit, P&L ($ / %), Duration, Confidence Score, and Expandable Explanation Drawer explaining reason for entry, SL/TP calculation logic, and exit trigger."
+  },
+  "motion": {
+    "micro_interactions": "Smooth 150ms hover glow on interactive controls, 300ms flash highlights on live price updates, crisp tab transitions for timeframe switching.",
+    "prefers_reduced_motion": "All transitions wrap with `motion-reduce:transition-none` and `prefers-reduced-motion` fallbacks to avoid visual clutter.",
+    "live_tick_flash": "Animate subtle background pulse (`bg-emerald-500/10` or `bg-rose-500/10`) for 500ms whenever WebSocket tick updates XAUUSDT price."
+  },
+  "accessibility": {
+    "contrast": "All text tokens pass APCA and WCAG AA 4.5:1 minimum against their respective dark panel backgrounds.",
+    "data_test_ids": "Mandatory data-testid attributes on all interactive controls, price tickers, signal indicators, timeframe buttons, and trade log rows.",
+    "keyboard_nav": "Visible focus ring (`focus:ring-2 focus:ring-amber-500 focus:outline-none`) on all timeframe buttons and trade action triggers."
+  },
+  "media": {
+    "image_urls": {
+      "gold_bullion_bg": "https://images.unsplash.com/photo-1610375461246-83df859d849d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MTJ8MHwxfHNlYXJjaHwxfHxnb2xkJTIwYnVsbGlvbiUyMHRyYWRpbmclMjBtYXJrZXR8ZW58MHx8fHwxNzg3MjE1NDU4fDA&ixlib=rb-4.1.0&q=85",
+      "gold_bars_stacked": "https://images.unsplash.com/photo-1624365169364-0640dd10e180?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MTJ8MHwxfHNlYXJjaHwyfHxnb2xkJTIwYnVsbGlvbiUyMHRyYWRpbmclMjBtYXJrZXR8ZW58MHx8fHwxNzg3MjE1NDU4fDA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "3d_libraries": {
+    "charts_implementation": "Recharts (preinstalled) custom responsive ComposedChart for candlestick & indicator layer, AreaChart for RSI/MACD/ADX sub-charts, and RadialBarChart / PieChart for Signal Confidence dial."
+  },
+  "component_path": {
+    "css_entry": "/app/frontend/src/index.css",
+    "app_shell": "/app/frontend/src/App.tsx",
+    "ui_components_dir": "/app/frontend/src/components/ui/"
+  },
+  "instructions_to_main_agent": [
+    "1. Replace font import in `/app/frontend/src/index.css` with `@import '@fontsource-variable/jetbrains-mono';` and set `--font-sans: 'JetBrains Mono Variable', monospace;` and `--font-heading: 'JetBrains Mono Variable', monospace;`.",
+    "2. Ensure dark mode is active by setting `<html class=\"dark\">` in `frontend/index.html`.",
+    "3. Build a robust backend paper trading engine in FastAPI (`backend/routers/` or `backend/server.py`) that fetches live Binance XAUUSDT Futures klines/ticks via WebSocket or REST fallback, calculates multi-indicator confirmations (EMA, RSI, MACD, Bollinger, ATR, ADX, VWAP, S/R), generates signals with confidence scores, auto-opens paper trades when confidence >= 80%, manages SL/TP, trailing stop, trade timeout, and detailed trade rationale logs.",
+    "4. Construct the frontend dashboard using a dense MT5 terminal layout with top ticker bar, timeframe buttons (1m, 5m, 15m, 30m, 1h), dynamic Recharts candlestick view with Entry/SL/TP ReferenceLines, Signal Radar card, Paper Wallet Summary card, Active Trade card, and expandable Trade History table.",
+    "5. Every key interactive element and metric MUST include a `data-testid` attribute (e.g. `data-testid=\"timeframe-1m-button\"`, `data-testid=\"live-price-ticker\"`, `data-testid=\"signal-confidence-score\"`, `data-testid=\"active-trade-card\"`, `data-testid=\"trade-history-row\"`).",
+    "6. Do NOT use center-aligned global body styles or full-screen generic gradients. Keep borders clean with `border-slate-800` and crisp 1px hairlines."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Avoid generic AI slop: build high-density, rich institutional interfaces that resemble MT5 / Bloomberg Terminal.",
+    "Do NOT use AI assistant emojis (🤖, 🧠, 💡, 🔮) as icons. Use Lucide icons (e.g. `TrendingUp`, `TrendingDown`, `ShieldAlert`, `Clock`, `Activity`, `Wallet`).",
+    "Always specify explicit transitions for interactive states (e.g. `transition-colors duration-150`), avoiding global `transition: all`.",
+    "Use generous padding inside bordered containers (`p-4` to `p-6`) to prevent text and chart edge collision.",
+    "Ensure all toast notifications utilize `sonner` (`import { toast } from 'sonner'`)."
+  ]
+}
