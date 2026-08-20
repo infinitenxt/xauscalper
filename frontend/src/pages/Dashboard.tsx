@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useLogout, useMe } from "@/hooks/useAuth";
 import { ApiError } from "@/lib/api";
 import { Toaster } from "@/components/ui/sonner";
+import ActivePositionPanel from "@/components/ActivePositionPanel";
 import BacktestPanel from "@/components/BacktestPanel";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import PriceChart from "@/components/PriceChart";
@@ -358,6 +359,13 @@ export default function Dashboard() {
 
         <SessionBar sessions={data?.sessions} filterOn={data?.config.session_filter_enabled ?? true} />
 
+        <ActivePositionPanel
+          trade={data?.open_trade}
+          config={data?.config}
+          onClose={(id) => closeTrade.mutate(id)}
+          closing={closeTrade.isPending}
+        />
+
         <SignalBanner
           signal={data?.signal}
           guards={data?.guards}
@@ -383,13 +391,7 @@ export default function Dashboard() {
           stale={dash.isError}
         />
 
-        <WalletPanel
-          wallet={data?.wallet}
-          trade={data?.open_trade}
-          config={data?.config}
-          onClose={(id) => closeTrade.mutate(id)}
-          closing={closeTrade.isPending}
-        />
+        <WalletPanel wallet={data?.wallet} config={data?.config} />
 
         <section
           className="col-span-12 space-y-3 rounded-md border border-slate-800 bg-[#111827] p-4 lg:col-span-8"

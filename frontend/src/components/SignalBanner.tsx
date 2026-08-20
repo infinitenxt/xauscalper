@@ -59,7 +59,7 @@ export default function SignalBanner({
   return (
     <section
       className={cn(
-        "col-span-12 rounded-md border p-3 transition-colors duration-300",
+        "col-span-12 rounded-md border p-3 transition-colors duration-300 lg:col-span-7",
         skin.frame,
         armed && skin.glow,
       )}

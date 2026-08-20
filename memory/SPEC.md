@@ -215,3 +215,9 @@ balance (subscribers only).
   Admin CRUD at `GET/POST /api/admin/invites`, `DELETE /api/admin/invites/{email}`
   (Invites tab). `POST /api/auth/register` returns 403 for an uninvited email, 409 for a
   used invite, and marks the invite used on success. AdminStats gains `invites_pending`.
+
+## Update — top-row layout
+- The dashboard's top row is now a single grid row: `ActivePositionPanel`
+  (left, `lg:col-span-5`, testid `active-position-panel`) beside `SignalBanner`
+  (right, `lg:col-span-7`). The active-position block was moved out of
+  `WalletPanel`, which is now wallet stats only (`wallet`, `config` props).
