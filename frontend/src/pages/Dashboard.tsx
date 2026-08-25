@@ -383,6 +383,7 @@ export default function Dashboard() {
           openTrade={data?.open_trade}
           livePrice={data?.ticker.price}
           loading={candles.isLoading}
+          symbol={data?.feed.display_symbol ?? data?.feed.symbol}
         />
 
         <SignalPanel

@@ -148,6 +148,35 @@ export default function TickerBar({
             <span className="text-[10px] text-slate-400" data-testid="feed-status">
               {feed?.provider_label ?? (live ? "live" : "offline")}
             </span>
+            {feed ? (
+              <span
+                data-testid="feed-live-source"
+                className={cn(
+                  "rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
+                  feed.stale
+                    ? "bg-rose-950 text-rose-300"
+                    : feed.live_source === "websocket"
+                      ? "bg-emerald-950 text-emerald-300"
+                      : "bg-slate-800 text-slate-400",
+                )}
+                title={
+                  feed.stale
+                    ? "No fresh tick — price shown is not live"
+                    : `${feed.live_source} feed · tick ${feed.tick_age_seconds ?? 0}s old`
+                }
+              >
+                {feed.stale ? "stale" : feed.live_source === "websocket" ? "ws live" : "rest"}
+              </span>
+            ) : null}
+            {feed?.is_proxy ? (
+              <span
+                className="rounded bg-amber-950 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-300"
+                data-testid="feed-proxy-badge"
+                title="Not XAU/USD — PAXGUSDT gold proxy data"
+              >
+                gold proxy
+              </span>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-1" data-testid="timeframe-switcher">

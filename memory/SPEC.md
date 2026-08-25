@@ -221,3 +221,25 @@ balance (subscribers only).
   (left, `lg:col-span-5`, testid `active-position-panel`) beside `SignalBanner`
   (right, `lg:col-span-7`). The active-position block was moved out of
   `WalletPanel`, which is now wallet stats only (`wallet`, `config` props).
+
+## Update — consistent XAU/USD feed + scalping engine upgrade
+- **Single gold source.** `lib/market.py` provider chain: `binance-futures`
+  (fapi, XAUUSDT) → `binance-futures-www` (https://www.binance.com/fapi/v1 mirror with a browser
+  UA, same XAUUSDT market — this is what works from this pod, fapi returns 451) →
+  `binance-gold-proxy` (PAXGUSDT, labelled "PAXGUSDT GOLD PROXY (not XAU/USD)", last resort).
+  REST candles, WS ticks and the forming candle always come from the SAME provider symbol; live
+  data is tagged with its provider id and dropped when the provider changes, and a tick older
+  than `STALE_AFTER` (15s) is reported stale instead of being shown as live.
+- WebSocket (`fstream`, trade + kline 1m/5m/15m/30m/1h) is rebound to the active provider,
+  auto-reconnects with backoff, and `feed_status` exposes display_symbol, is_proxy, live_source,
+  ws_connected, ws_reconnects, stale, tick_age_seconds (UI shows "ws live/rest/stale" + a
+  "gold proxy" badge).
+- Indicators: added EMA21 and `indicators.breakout()` — breakout quality, fake-breakout
+  detection, chop via directional efficiency; exposed in the snapshot and Signal (`breakout`).
+- Strategy: MTF now 1m→[1m,5m,15m,30m,1h] and 5m→[5m,15m,30m,1h]; new weighted confirmation
+  "Breakout Quality" (TOTAL_WEIGHT 120, confidence rescaled); new hard gates — not choppy, no
+  fake break against us, higher timeframes not opposed (needs 2+ strong opposing TFs to block),
+  price not over-extended (>2.2 ATR from EMA21), volume ≥ 0.6x average. SL/TP rationale now also
+  states what invalidates the setup and the main risk.
+- Wallet adds `profit_factor` and `max_drawdown_pct`; chart overlays EMA9/21/50/200, VWAP,
+  Bollinger, entry/SL/TP plus break-even and trailing-stop lines.

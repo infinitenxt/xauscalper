@@ -19,8 +19,10 @@ interface Point {
   high: number;
   low: number;
   close: number;
-  ema20: number | null;
+  ema9: number | null;
+  ema21: number | null;
   ema50: number | null;
+  ema200: number | null;
   vwap: number | null;
   bbUpper: number | null;
   bbLower: number | null;
@@ -95,6 +97,7 @@ interface Props {
   openTrade: Trade | null | undefined;
   livePrice: number | null | undefined;
   loading: boolean;
+  symbol?: string | null;
 }
 
 export default function PriceChart({
@@ -104,11 +107,14 @@ export default function PriceChart({
   openTrade,
   livePrice,
   loading,
+  symbol,
 }: Props) {
   const rows = candles ?? [];
   const closes = rows.map((c) => c.close);
-  const e20 = emaSeries(closes, 20);
+  const e9 = emaSeries(closes, 9);
+  const e21 = emaSeries(closes, 21);
   const e50 = emaSeries(closes, 50);
+  const e200 = emaSeries(closes, 200);
   const bb = bollinger(closes);
   const vw = vwapSeries(rows);
 
@@ -119,8 +125,10 @@ export default function PriceChart({
     high: c.high,
     low: c.low,
     close: c.close,
-    ema20: e20[i],
+    ema9: e9[i],
+    ema21: e21[i],
     ema50: e50[i],
+    ema200: e200[i],
     vwap: vw[i],
     bbUpper: bb.upper[i],
     bbLower: bb.lower[i],
@@ -130,6 +138,8 @@ export default function PriceChart({
   const sl = openTrade?.sl ?? signal?.sl ?? null;
   const tp = openTrade?.tp ?? signal?.tp ?? null;
   const planned = !openTrade;
+  const breakEven = openTrade?.breakeven_done ? openTrade.entry : null;
+  const trailing = openTrade?.trailing_active ? openTrade.sl : null;
   const live = livePrice ?? (rows.length ? rows[rows.length - 1].close : null);
   const lastClose = rows.length ? rows[rows.length - 1].close : null;
   const liveUp = live !== null && lastClose !== null ? live >= lastClose : true;
@@ -149,19 +159,22 @@ export default function PriceChart({
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-slate-100">
-            XAUUSDT · <span className="text-amber-400">{timeframe}</span>
+          <h2 className="text-sm font-semibold text-slate-100" data-testid="chart-symbol">
+            {symbol ?? "XAUUSDT"} · <span className="text-amber-400">{timeframe}</span>
           </h2>
           <p className="text-[11px] text-slate-500">
-            Candles with EMA20 / EMA50 / VWAP / Bollinger, plus Entry, SL and TP levels
+            Candles with EMA9 / EMA21 / EMA50 / EMA200 / VWAP / Bollinger, plus Entry, SL, TP,
+            break-even and trailing stop
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-400">
           <Legend color="#38bdf8" label={planned ? "Planned Entry" : "Entry"} dashed={planned} />
           <Legend color="#f43f5e" label="Stop Loss" dashed={planned} />
           <Legend color="#10b981" label="Take Profit" dashed={planned} />
-          <Legend color="#eab308" label="EMA20" />
+          <Legend color="#38f8c8" label="EMA9" />
+          <Legend color="#eab308" label="EMA21" />
           <Legend color="#a78bfa" label="EMA50" />
+          <Legend color="#fb923c" label="EMA200" />
           <Legend color="#64748b" label="VWAP" />
           <Legend color="#f1f5f9" label="Live price" />
         </div>
@@ -215,8 +228,10 @@ export default function PriceChart({
               <Line dataKey="bbUpper" stroke="#334155" dot={false} strokeWidth={1} name="BB Upper" />
               <Line dataKey="bbLower" stroke="#334155" dot={false} strokeWidth={1} name="BB Lower" />
               <Bar dataKey="range" shape={<CandleShape />} isAnimationActive={false} name="OHLC" />
-              <Line dataKey="ema20" stroke="#eab308" dot={false} strokeWidth={1.4} name="EMA20" />
+              <Line dataKey="ema9" stroke="#38f8c8" dot={false} strokeWidth={1.2} name="EMA9" />
+              <Line dataKey="ema21" stroke="#eab308" dot={false} strokeWidth={1.4} name="EMA21" />
               <Line dataKey="ema50" stroke="#a78bfa" dot={false} strokeWidth={1.4} name="EMA50" />
+              <Line dataKey="ema200" stroke="#fb923c" dot={false} strokeWidth={1.2} name="EMA200" />
               <Line
                 dataKey="vwap"
                 stroke="#64748b"
@@ -225,6 +240,24 @@ export default function PriceChart({
                 strokeDasharray="4 3"
                 name="VWAP"
               />
+              {breakEven !== null && (
+                <ReferenceLine
+                  y={breakEven}
+                  stroke="#22d3ee"
+                  strokeWidth={1}
+                  strokeDasharray="2 3"
+                  label={{ value: `BE ${fmt(breakEven)}`, position: "left", fill: "#22d3ee", fontSize: 9 }}
+                />
+              )}
+              {trailing !== null && (
+                <ReferenceLine
+                  y={trailing}
+                  stroke="#fbbf24"
+                  strokeWidth={1}
+                  strokeDasharray="5 3"
+                  label={{ value: `TRAIL ${fmt(trailing)}`, position: "left", fill: "#fbbf24", fontSize: 9 }}
+                />
+              )}
               {entry !== null && (
                 <ReferenceLine
                   y={entry}

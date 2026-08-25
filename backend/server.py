@@ -25,9 +25,11 @@ async def lifespan(app: FastAPI):
     import seed
 
     await seed.run()
+    await market.start_feed()
     engine.start()
     yield
     await engine.stop()
+    await market.stop_websocket()
     await market.close_http()
     client.close()
 

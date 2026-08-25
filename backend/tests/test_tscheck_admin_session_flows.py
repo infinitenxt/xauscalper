@@ -14,10 +14,18 @@ worker (loadscope) and lets them run in a safe, deterministic order:
 5. test_5_self_service_password_change            - wrong current 401, valid change works, revert
 6. test_6_admin_force_password_reset              - >=8 char reset works, <8 char is 422
 9. test_9_presence_lapses_but_engine_keeps_running - presence lapse (must run
-   last: it needs a >30s window with NO /dashboard or /presence calls, so
-   nothing earlier in this file is allowed to touch presence afterwards)
+   last-among-the-original-6: it needs a >30s window with NO /dashboard or
+   /presence calls, so nothing else here should touch presence afterwards)
+10. test_10_feed_provider_is_binance_futures_www_not_paxg - consistent gold source
+11. test_11_candles_symbol_matches_ticker_price_all_timeframes - all timeframes work
+12. test_12_live_price_never_stale_and_moves               - live price never stale
+13. test_13_signal_indicators_breakout_and_mtf              - indicator + MTF payload
+14. test_14_risk_gates_cover_all_topics_and_gate_tradeable   - risk gates / tradeable gating
+15. test_15_level_reasons_have_numeric_values_and_sentences  - trade explanation uses real values
+16. test_16_wallet_exposes_profit_factor_and_max_drawdown    - wallet metrics
 """
 
+import re
 import time
 import uuid
 
@@ -36,6 +44,17 @@ REQUIRED_SESSION_FIELDS = (
     "profit_factor",
     "share_pct",
 )
+
+REQUIRED_INDICATOR_KEYS = {
+    "ema9", "ema21", "ema50", "ema200", "vwap", "rsi", "adx", "atr",
+    "volume", "volume_avg", "bb_upper", "bb_lower",
+}
+REQUIRED_BREAKOUT_KEYS = {"label", "quality", "fake", "chop", "efficiency"}
+REQUIRED_MTF_KEYS = {"1m", "5m", "15m", "30m", "1h"}
+EXPECTED_GATE_TOPICS = [
+    "confidence", "adx", "volatility", "reward", "choppy", "fake", "higher timeframe",
+    "over-extended", "volume",
+]
 
 
 def test_1_admin_wallet_and_trades_scoped_to_user():

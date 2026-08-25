@@ -26,7 +26,10 @@ from models.trading import (
 router = APIRouter(tags=["trading"])
 Sub = Depends(auth.require_subscription)
 
-
+@router.get("/debug/xau-rest")
+async def debug_xau_rest(user: Dict[str, Any] = Sub):
+    from lib.market import test_xau_rest
+    return await test_xau_rest()
 def _tf(timeframe: str) -> str:
     if timeframe not in market.INTERVAL_MINUTES:
         raise HTTPException(status_code=400, detail=f"unsupported timeframe '{timeframe}'")

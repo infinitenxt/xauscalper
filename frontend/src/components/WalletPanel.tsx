@@ -59,6 +59,19 @@ export default function WalletPanel({ wallet, config }: Props) {
           sub={`limit ${fmt(config?.daily_loss_limit_pct ?? 3, 2)}%`}
         />
         <Stat
+          label="Profit factor"
+          value={`${fmt(wallet?.profit_factor ?? 0, 2)}`}
+          testid="wallet-profit-factor"
+          sub="gross win / gross loss"
+        />
+        <Stat
+          label="Max drawdown"
+          value={`${fmt(wallet?.max_drawdown_pct ?? 0, 2)}%`}
+          testid="wallet-max-drawdown"
+          accent="text-rose-300"
+          sub="peak-to-trough equity"
+        />
+        <Stat
           label="Max hold"
           value={`${config?.max_hold_minutes ?? 15} min`}
           testid="wallet-max-hold"

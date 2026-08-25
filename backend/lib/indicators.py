@@ -256,6 +256,89 @@ def candle_pattern(candles: Sequence[Candle]) -> Dict[str, object]:
     }
 
 
+def breakout(candles: Sequence[Candle], lookback: int = 20) -> Dict[str, object]:
+    """Breakout quality, fake-breakout and chop read for scalping.
+
+    * quality  0..1  — how convincing the break of the recent range is
+    * fake     True  — price pierced the range then closed back inside
+    * chop     True  — directional efficiency too low to scalp
+    """
+    if len(candles) < lookback + 5:
+        return {
+            "label": "NO DATA", "bias": 0.0, "detail": "not enough candles for a breakout read",
+            "quality": 0.0, "fake": False, "chop": False, "efficiency": 0.0,
+        }
+
+    window = list(candles[-(lookback + 1) : -1])
+    last = candles[-1]
+    hi = max(c["high"] for c in window)
+    lo = min(c["low"] for c in window)
+    rng = max(hi - lo, 1e-9)
+    body = abs(last["close"] - last["open"])
+    candle_rng = max(last["high"] - last["low"], 1e-9)
+    close_pos = (last["close"] - last["low"]) / candle_rng  # 1 = closed on the high
+    vols = [c["volume"] for c in candles[-(lookback + 1) :]]
+    vol_avg = sum(vols[:-1]) / max(1, len(vols) - 1)
+    vol_ratio = (vols[-1] / vol_avg) if vol_avg else 1.0
+
+    # directional efficiency over the window: net move / total travel
+    closes_w = [c["close"] for c in candles[-(lookback + 1) :]]
+    travel = sum(abs(closes_w[i] - closes_w[i - 1]) for i in range(1, len(closes_w))) or 1e-9
+    efficiency = abs(closes_w[-1] - closes_w[0]) / travel
+    chop = efficiency < 0.22
+
+    up_break = last["close"] > hi
+    down_break = last["close"] < lo
+    pierced_up = last["high"] > hi and last["close"] <= hi
+    pierced_down = last["low"] < lo and last["close"] >= lo
+
+    if up_break or down_break:
+        quality = min(
+            1.0,
+            (body / candle_rng) * 0.4
+            + min(1.0, vol_ratio / 1.5) * 0.3
+            + (close_pos if up_break else 1 - close_pos) * 0.3,
+        )
+        beyond = (last["close"] - hi) if up_break else (lo - last["close"])
+        label = "BREAKOUT UP" if up_break else "BREAKOUT DOWN"
+        bias = (1.0 if up_break else -1.0) * quality
+        detail = (
+            f"closed {beyond:.2f} beyond the {lookback}-bar "
+            f"{'high ' + format(hi, '.2f') if up_break else 'low ' + format(lo, '.2f')} "
+            f"on {vol_ratio:.2f}x average volume, body {body / candle_rng * 100:.0f}% of range "
+            f"(quality {quality * 100:.0f}%)"
+        )
+        return {
+            "label": label, "bias": bias, "detail": detail, "quality": round(quality, 3),
+            "fake": False, "chop": chop, "efficiency": round(efficiency, 3),
+        }
+
+    if pierced_up or pierced_down:
+        label = "FAKE BREAKOUT UP" if pierced_up else "FAKE BREAKOUT DOWN"
+        level = hi if pierced_up else lo
+        return {
+            "label": label,
+            "bias": -0.7 if pierced_up else 0.7,  # failed break = reversal pressure
+            "detail": (
+                f"price pierced {level:.2f} but closed back inside the {lookback}-bar range — "
+                "failed break, liquidity grab rather than continuation"
+            ),
+            "quality": 0.0, "fake": True, "chop": chop, "efficiency": round(efficiency, 3),
+        }
+
+    pos = (last["close"] - lo) / rng
+    return {
+        "label": "CHOPPY RANGE" if chop else "INSIDE RANGE",
+        "bias": 0.0,
+        "detail": (
+            f"price is {pos * 100:.0f}% up the {lookback}-bar range "
+            f"({lo:.2f}–{hi:.2f}), directional efficiency {efficiency:.2f}"
+            + (" — chop, no clean scalp" if chop else "")
+        ),
+        "quality": 0.0, "fake": False, "chop": chop, "efficiency": round(efficiency, 3),
+    }
+
+
 def snapshot(candles: Sequence[Candle]) -> Dict[str, object]:
     """Everything the strategy needs for one timeframe."""
     cl = closes(candles)
@@ -263,9 +346,11 @@ def snapshot(candles: Sequence[Candle]) -> Dict[str, object]:
     m = macd(cl)
     bb = bollinger(cl)
     dmi = adx(candles)
+    brk = breakout(candles)
     return {
         "price": cl[-1] if cl else None,
         "ema9": ema(cl, 9),
+        "ema21": ema(cl, 21),
         "ema20": ema(cl, 20),
         "ema50": ema(cl, 50),
         "ema200": ema(cl, 200),
@@ -286,7 +371,10 @@ def snapshot(candles: Sequence[Candle]) -> Dict[str, object]:
         "vwap": vwap(candles),
         "volume": vols[-1] if vols else None,
         "volume_avg": sma(vols, 20),
+        "breakout_quality": float(brk.get("quality") or 0.0),
+        "range_efficiency": float(brk.get("efficiency") or 0.0),
         "levels": support_resistance(candles),
         "structure": market_structure(candles),
         "pattern": candle_pattern(candles),
+        "breakout": brk,
     }

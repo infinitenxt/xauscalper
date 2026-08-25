@@ -27,10 +27,17 @@ class FeedStatus(BaseModel):
     provider_id: Optional[str] = None
     provider_label: str = ""
     symbol: Optional[str] = None
+    display_symbol: Optional[str] = None
     kind: Optional[str] = None
     degraded: bool = False
+    is_proxy: bool = False
     note: str = ""
     last_error: str = ""
+    live_source: str = "rest"
+    ws_connected: bool = False
+    ws_reconnects: int = 0
+    stale: bool = True
+    tick_age_seconds: Optional[float] = None
 
 
 class Ticker(BaseModel):
@@ -70,6 +77,16 @@ class Read(BaseModel):
     detail: str = ""
 
 
+class BreakoutRead(BaseModel):
+    label: str = ""
+    bias: float = 0.0
+    detail: str = ""
+    quality: float = 0.0
+    fake: bool = False
+    chop: bool = False
+    efficiency: float = 0.0
+
+
 class MtfRead(BaseModel):
     trend: str
     rsi: Optional[float] = None
@@ -97,6 +114,7 @@ class Signal(BaseModel):
     levels: Levels = Levels()
     structure: Read = Read()
     pattern: Read = Read()
+    breakout: BreakoutRead = BreakoutRead()
     mtf: Dict[str, MtfRead] = {}
     generated_at: Optional[str] = None
 
@@ -112,6 +130,8 @@ class Wallet(BaseModel):
     unrealized_pnl: float = 0.0
     equity: float = 0.0
     win_rate: float = 0.0
+    profit_factor: float = 0.0
+    max_drawdown_pct: float = 0.0
     return_pct: float = 0.0
     day_pnl: float = 0.0
     open_position: bool = False

@@ -29,8 +29,10 @@ MAX_ATR_PCT = 1.600
 TRADE_COOLDOWN_SEC = 60
 
 MTF_MAP = {
-    "1m": ["1m", "5m", "15m"],
-    "5m": ["5m", "15m", "1h"],
+    # 1m = entry timing, 5m = primary scalping trend, 15m = confirmation,
+    # 30m = broader trend, 1h = major trend filter.
+    "1m": ["1m", "5m", "15m", "30m", "1h"],
+    "5m": ["5m", "15m", "30m", "1h"],
     "15m": ["15m", "1h"],
     "30m": ["30m", "1h"],
     "1h": ["1h"],
@@ -251,6 +253,16 @@ def c_levels(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
     return _vote(bias, 10, "Support / Resistance", state, "; ".join(notes).capitalize() + ".")
 
 
+def c_breakout(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
+    """Breakout quality / fake-breakout / chop read of the recent range."""
+    brk = s.get("breakout") or {}
+    if not isinstance(brk, dict) or brk.get("label") == "NO DATA":
+        return _vote(0, 10, "Breakout Quality", "n/a", "not enough candles for a breakout read")
+    bias = float(brk.get("bias", 0.0))
+    label = str(brk.get("label", ""))
+    return _vote(bias, 10, "Breakout Quality", label, str(brk.get("detail", "")).capitalize() + ".")
+
+
 CONFIRMATIONS: List[Callable[[Snapshot, Dict[str, Snapshot]], Dict[str, object]]] = [
     c_ema_trend,
     c_mtf_trend,
@@ -263,7 +275,10 @@ CONFIRMATIONS: List[Callable[[Snapshot, Dict[str, Snapshot]], Dict[str, object]]
     c_bollinger,
     c_volume,
     c_price_action,
+    c_breakout,
 ]
+
+TOTAL_WEIGHT = 120.0  # keep in sync when a confirmation is added/reweighted
 
 
 # --------------------------------------------------------------- SL/TP design
@@ -333,6 +348,29 @@ def plan_levels(
                     "so we bank profit before the level bounces price."
                 )
     final_rr = abs(tp - entry) / sl_dist if sl_dist else 0.0
+    struct = snap.get("structure") if isinstance(snap.get("structure"), dict) else {}
+    brk = snap.get("breakout") if isinstance(snap.get("breakout"), dict) else {}
+    e21 = _f(snap, "ema21") or _f(snap, "ema20")
+    vw = _f(snap, "vwap")
+    if direction == "BUY":
+        reasons.append(
+            "Setup is invalidated if price closes back below "
+            + (f"EMA21 {e21:.2f}" if e21 else "the fast EMA")
+            + (f" or loses VWAP {vw:.2f}" if vw else "")
+            + f", or if structure flips from {struct.get('label', 'its current read')} to lower highs and lower lows."
+        )
+    else:
+        reasons.append(
+            "Setup is invalidated if price closes back above "
+            + (f"EMA21 {e21:.2f}" if e21 else "the fast EMA")
+            + (f" or reclaims VWAP {vw:.2f}" if vw else "")
+            + f", or if structure flips from {struct.get('label', 'its current read')} to higher highs and higher lows."
+        )
+    reasons.append(
+        f"Main risk: gold can move {a:.2f} (1 ATR) either way on news or a liquidity grab; the current "
+        f"range read is {brk.get('label', 'unclassified')}, so a sudden reversal would hit the stop before "
+        "the target. Risk is capped at the configured % of balance — paper trading only, no signal is a guarantee."
+    )
     return sl, tp, reasons, final_rr
 
 
@@ -381,7 +419,7 @@ def analyze(
     bear = sum(float(c["weight"]) * max(-float(c["vote"]), 0.0) for c in confirmations)  # type: ignore[arg-type]
     net = bull - bear
     direction = "BUY" if net > 0 else ("SELL" if net < 0 else "WAIT")
-    confidence = round(min(97.0, abs(net) * 1.2), 1)
+    confidence = round(min(97.0, abs(net) / TOTAL_WEIGHT * 132.0), 1)
     if confidence < 15:
         direction = "WAIT"
 
@@ -395,6 +433,54 @@ def analyze(
         sl, tp, level_reasons, rr = plan_levels(direction, price, snap, cfg)
 
     last_closed = primary[-2]["close"] if len(primary) >= 2 else primary[-1]["close"]
+
+    # ---- extra scalping gates ------------------------------------------------
+    brk = snap.get("breakout") if isinstance(snap.get("breakout"), dict) else {}
+    brk_label = str(brk.get("label", "")) if isinstance(brk, dict) else ""
+    chop = bool(brk.get("chop")) if isinstance(brk, dict) else False
+    fake = bool(brk.get("fake")) if isinstance(brk, dict) else False
+    efficiency = float(brk.get("efficiency") or 0.0) if isinstance(brk, dict) else 0.0
+    fake_bias = float(brk.get("bias") or 0.0) if isinstance(brk, dict) else 0.0
+    fake_against = (direction == "BUY" and fake_bias < 0) or (direction == "SELL" and fake_bias > 0)
+
+    # higher timeframes must not strongly contradict the entry timeframe
+    higher = [tf for tf in ("15m", "30m", "1h") if tf in mtf_snaps and tf != timeframe]
+    opposed: List[str] = []
+    for tf in higher:
+        sn = mtf_snaps[tf]
+        e_fast, e_slow = _f(sn, "ema21") or _f(sn, "ema20"), _f(sn, "ema50")
+        adx_tf = _f(sn, "adx") or 0.0
+        if e_fast is None or e_slow is None:
+            continue
+        tf_up = e_fast > e_slow
+        strong = adx_tf >= 20
+        if strong and ((direction == "BUY" and not tf_up) or (direction == "SELL" and tf_up)):
+            opposed.append(f"{tf} (ADX {adx_tf:.0f})")
+    mtf_ok = direction not in ("BUY", "SELL") or len(opposed) < 2
+    mtf_detail = (
+        f"{len(opposed)} higher timeframe(s) strongly opposed: {', '.join(opposed)}"
+        if opposed
+        else f"{len(higher)} higher timeframe(s) checked, none strongly opposed"
+    )
+
+    # over-extension: price far from EMA21 in ATR terms
+    e21 = _f(snap, "ema21") or _f(snap, "ema20")
+    stretch = abs(price - e21) / a if (e21 and a) else None
+    extended = bool(stretch is not None and stretch > 2.2)
+    extension_detail = (
+        f"price is {stretch:.2f} ATR from EMA21 (cap 2.20 ATR)"
+        if stretch is not None
+        else "EMA21 distance unavailable"
+    )
+
+    vol_now, vol_avg = _f(snap, "volume"), _f(snap, "volume_avg")
+    vol_ratio = (vol_now / vol_avg) if (vol_now and vol_avg) else None
+    vol_ok = vol_ratio is None or vol_ratio >= 0.6
+    vol_detail = (
+        f"current bar traded {vol_ratio:.2f}x its 20-bar average (need ≥ 0.60x)"
+        if vol_ratio is not None
+        else "volume data unavailable"
+    )
 
     checks: List[Dict[str, object]] = [
         {
@@ -425,6 +511,38 @@ def analyze(
             "name": "Direction is not WAIT",
             "passed": direction in ("BUY", "SELL"),
             "detail": f"engine bias {direction}",
+        },
+        {
+            "name": "Market is not choppy",
+            "passed": not chop,
+            "detail": (
+                f"{brk_label} — directional efficiency {efficiency:.2f} "
+                f"(need ≥ 0.22 to scalp)"
+            ),
+        },
+        {
+            "name": "No failed/fake breakout against us",
+            "passed": not (fake and fake_against),
+            "detail": (
+                f"{brk_label}: a failed break points the other way"
+                if (fake and fake_against)
+                else (brk_label or "no failed break detected")
+            ),
+        },
+        {
+            "name": "Higher timeframes not opposed",
+            "passed": mtf_ok,
+            "detail": mtf_detail,
+        },
+        {
+            "name": "Price not over-extended",
+            "passed": not extended,
+            "detail": extension_detail,
+        },
+        {
+            "name": "Volume participation",
+            "passed": vol_ok,
+            "detail": vol_detail,
         },
     ]
     tradeable = all(bool(c["passed"]) for c in checks)
@@ -466,15 +584,17 @@ def analyze(
         "indicators": {
             k: v
             for k, v in snap.items()
-            if k not in ("levels", "structure", "pattern") and isinstance(v, (int, float))
+            if k not in ("levels", "structure", "pattern", "breakout")
+            and isinstance(v, (int, float))
         },
         "levels": snap.get("levels"),
         "structure": snap.get("structure"),
         "pattern": snap.get("pattern"),
+        "breakout": snap.get("breakout"),
         "mtf": {
             tf: {
                 "trend": "UP"
-                if (_f(sn, "ema20") or 0) > (_f(sn, "ema50") or 0)
+                if ((_f(sn, "ema21") or _f(sn, "ema20") or 0) > (_f(sn, "ema50") or 0))
                 else "DOWN",
                 "rsi": _f(sn, "rsi"),
                 "adx": _f(sn, "adx"),

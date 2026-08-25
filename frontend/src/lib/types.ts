@@ -20,10 +20,17 @@ export interface FeedStatus {
   provider_id: string | null;
   provider_label: string;
   symbol: string | null;
+  display_symbol: string | null;
   kind: string | null;
   degraded: boolean;
+  is_proxy: boolean;
   note: string;
   last_error: string;
+  live_source: string;
+  ws_connected: boolean;
+  ws_reconnects: number;
+  stale: boolean;
+  tick_age_seconds: number | null;
 }
 
 export interface Ticker {
@@ -63,6 +70,16 @@ export interface Read {
   detail: string;
 }
 
+export interface BreakoutRead {
+  label: string;
+  bias: number;
+  detail: string;
+  quality: number;
+  fake: boolean;
+  chop: boolean;
+  efficiency: number;
+}
+
 export interface MtfRead {
   trend: string;
   rsi: number | null;
@@ -90,6 +107,7 @@ export interface Signal {
   levels: Levels;
   structure: Read;
   pattern: Read;
+  breakout: BreakoutRead;
   mtf: Record<string, MtfRead>;
   generated_at: string | null;
 }
@@ -105,6 +123,8 @@ export interface Wallet {
   unrealized_pnl: number;
   equity: number;
   win_rate: number;
+  profit_factor: number;
+  max_drawdown_pct: number;
   return_pct: number;
   day_pnl: number;
   open_position: boolean;

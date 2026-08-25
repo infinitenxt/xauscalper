@@ -126,12 +126,30 @@ async def wallet_view(
     w = await get_wallet(user_id)
     unrealized = _pnl(open_trade, price) if (open_trade and price) else 0.0
     total = w["wins"] + w["losses"]
+
+    # profit factor and equity drawdown from this user's closed trades
+    closed = await db.trades.find(
+        {"user_id": user_id, "status": "CLOSED"}, {"pnl": 1, "closed_at": 1}
+    ).sort("closed_at", 1).to_list(1000)
+    gross_win = sum(float(t.get("pnl") or 0.0) for t in closed if float(t.get("pnl") or 0.0) > 0)
+    gross_loss = -sum(float(t.get("pnl") or 0.0) for t in closed if float(t.get("pnl") or 0.0) < 0)
+    equity_run = float(w["starting_balance"])
+    peak = equity_run
+    max_dd = 0.0
+    for t in closed:
+        equity_run += float(t.get("pnl") or 0.0)
+        peak = max(peak, equity_run)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - equity_run) / peak * 100)
+
     return {
         **w,
         "id": w["user_id"],
         "unrealized_pnl": round(unrealized, 2),
         "equity": round(w["balance"] + unrealized, 2),
         "win_rate": round(w["wins"] / total * 100, 1) if total else 0.0,
+        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else round(gross_win, 2),
+        "max_drawdown_pct": round(max_dd, 2),
         "return_pct": round(
             (w["balance"] + unrealized - w["starting_balance"]) / w["starting_balance"] * 100, 2
         ),
