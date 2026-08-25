@@ -68,7 +68,7 @@ def site_public(raw: Dict[str, Any]) -> SiteSettings:
 @router.get("/stats", response_model=AdminStats)
 async def stats() -> AdminStats:
     week = auth.now() - timedelta(days=7)
-    users = [u async for u in db.users.find({})]
+    users = await db.users.find({}).to_list(10_000)
     paid = await db.payments.find({"status": "paid"}).to_list(2000)
     return AdminStats(
         users_total=len(users),

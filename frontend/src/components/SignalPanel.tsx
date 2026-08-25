@@ -34,7 +34,7 @@ export default function SignalPanel({
         <div>
           <h2 className="text-sm font-semibold text-slate-100">Signal Engine</h2>
           <p className="text-[11px] text-slate-500">
-            11 weighted confirmations · {signal?.timeframe ?? "—"} timeframe
+            12 weighted confirmations · {signal?.timeframe ?? "—"} timeframe
           </p>
         </div>
         <span

@@ -80,8 +80,9 @@ export default function AuthPage({ mode }: Props) {
           </div>
 
           <div>
-            <Label className="text-[11px] text-slate-300">Email</Label>
+            <Label htmlFor="auth-email" className="text-[11px] text-slate-300">Email</Label>
             <Input
+              id="auth-email"
               type="email"
               required
               autoComplete="email"
@@ -95,8 +96,9 @@ export default function AuthPage({ mode }: Props) {
 
           {!isLogin ? (
             <div>
-              <Label className="text-[11px] text-slate-300">Username</Label>
+              <Label htmlFor="auth-username" className="text-[11px] text-slate-300">Username</Label>
               <Input
+                id="auth-username"
                 required
                 minLength={3}
                 value={username}
@@ -109,8 +111,9 @@ export default function AuthPage({ mode }: Props) {
           ) : null}
 
           <div>
-            <Label className="text-[11px] text-slate-300">Password</Label>
+            <Label htmlFor="auth-password" className="text-[11px] text-slate-300">Password</Label>
             <Input
+              id="auth-password"
               type="password"
               required
               minLength={isLogin ? 1 : 8}

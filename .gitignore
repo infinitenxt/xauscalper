@@ -90,3 +90,6 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# The deployment builder requires this non-secret frontend configuration file.
+!frontend/.env

@@ -1,0 +1,78 @@
+{
+  "iteration": 2,
+  "mode": "generate",
+  "summary": "All 4 acceptance-matrix criteria exercised: frontend env/build contract and Atlas-safe startup seeding covered by new backend tests (static inspection + live idempotent-run checks), admin/stats bounding covered by a new backend test hitting the running server, and the core dashboard regression covered by a new browser check. Full backend suite (15 tests) and the new browser check pass; frontend production build completes cleanly.",
+  "passed": 6,
+  "failed": 0,
+  "flaky": 0,
+  "blocked": 0,
+  "test_error": 0,
+  "checks": [
+    {
+      "criterion": "Deployment frontend environment contract",
+      "name": "test_frontend_env_has_safe_relative_api_base (test_tscheck_frontend_env_contract.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "frontend/.env contains VITE_API_BASE=/api (relative, no scheme)."
+    },
+    {
+      "criterion": "Deployment frontend environment contract",
+      "name": "test_frontend_package_json_exposes_start_script (test_tscheck_frontend_env_contract.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "frontend/package.json scripts.start = 'vite'."
+    },
+    {
+      "criterion": "Deployment frontend environment contract",
+      "name": "manual: yarn build",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "cd /app/frontend && yarn build -> 'tsc -b && vite build' completed: 'built in 1.71s', dist/ emitted, no missing-env failure (only a non-blocking chunk-size warning)."
+    },
+    {
+      "criterion": "Atlas-safe startup seeding",
+      "name": "test_seed_source_has_no_bulk_delete_or_drop (test_tscheck_atlas_safe_seeding.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "backend/seed.py source contains no 'delete_many', 'drop_collection', or '.drop(' calls; grep across backend/*.py confirms the only delete_many usages are scoped session/user-specific operations in auth.py, engine.py, admin.py (not startup)."
+    },
+    {
+      "criterion": "Atlas-safe startup seeding",
+      "name": "test_seed_run_preserves_legacy_trade_wallet_session_records (test_tscheck_atlas_safe_seeding.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Inserted tscheck-seed-* trade/wallet/session fixture rows, called seed.run() against the live local Mongo, then confirmed all three rows still exist and the admin user (admin@infinitenxt.com, role=admin) is present; fixtures deleted in finally."
+    },
+    {
+      "criterion": "Admin stats query remains functional after bounding",
+      "name": "test_admin_stats_returns_bounded_fields (test_tscheck_admin_stats_bounded.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /auth/login (admin) -> 200; GET /admin/stats -> 200 with int fields users_total, subscribers, payments, plans, invites_pending all present."
+    },
+    {
+      "criterion": "Admin stats query remains functional after bounding",
+      "name": "test_admin_stats_requires_auth (test_tscheck_admin_stats_bounded.py)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /admin/stats without session cookie -> 401."
+    },
+    {
+      "criterion": "Core application regression",
+      "name": "admin-dashboard-core-regression",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Signed in at /login with admin@infinitenxt.com/Harsh@10576, landed on dashboard: presence-indicator, live-price-ticker (numeric text), feed-live-source, ticker-symbol (contains 'XAU'), and signal-panel all visible; no >=400 responses observed on any /api/* call during the flow."
+    }
+  ],
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "notes": [
+    "8 total artifacts across 4 criteria (2 pure-API/static criteria got backend-only coverage; 1 API criterion got backend coverage; 1 UI criterion got a browser check). Fewer than 8 acceptance-matrix criteria overall, so no count-exceeded note needed.",
+    "seed.py inspection: admin/plan/site-settings seeding and index creation are all guarded by find_one-not-exists checks; the only delete_many calls in the codebase are scoped, request-triggered operations (session invalidation on logout/password-change, per-user wallet/trade reset), never part of the startup seed path.",
+    "admin/stats already bounded via to_list(10_000) / to_list(2000) caps in routers/admin.py; confirmed still returns 200 with the full expected shape.",
+    "Pre-existing regression test files (test_tscheck_admin_session_flows.py, test_tscheck_engine_never_sleeps.py, test_tscheck_trading_routes_require_auth.py) re-ran clean alongside the new tests - 15/15 backend tests passing.",
+    "Removed the stray .backup file left by the browser-check selector-fix iteration before finishing, per fixture/artifact hygiene."
+  ]
+}

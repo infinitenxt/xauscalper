@@ -81,11 +81,6 @@ SITE: Dict[str, Any] = {
 
 
 async def run() -> None:
-    # --- migrate pre-multi-user data: wallets/trades without an owner
-    await db.trades.delete_many({"user_id": {"$exists": False}})
-    await db.wallets.delete_many({"user_id": {"$exists": False}})
-    await db.wallet.drop()  # legacy single shared wallet collection
-
     # --- admin account (create, or migrate the legacy seeded admin in place)
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
     if not existing:
@@ -105,7 +100,6 @@ async def run() -> None:
                     }
                 },
             )
-            await db.sessions.delete_many({"user_id": legacy["id"]})
             logger.info("migrated legacy admin account to %s", ADMIN_EMAIL)
         else:
             await db.users.insert_one(

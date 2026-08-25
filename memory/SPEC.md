@@ -3,7 +3,7 @@
 ## What it is
 Single-page MT5-inspired dark trading terminal for XAUUSDT (gold), tuned for
 **1-minute scalping**. A backend engine polls real Binance gold market data,
-scores an 11-confirmation confluence signal (BUY / SELL / WAIT + confidence %),
+scores a 12-confirmation confluence signal (BUY / SELL / WAIT + confidence %),
 and auto-opens **virtual** paper trades when confidence ≥ 80%, every entry gate
 passes, and no account circuit breaker is tripped. No real orders, no auth — one
 shared paper account. The browser speaks every signal comment and trade
@@ -36,13 +36,15 @@ WebSocket) — the engine loop is 5s, dashboard refetch 4s, candles 6s.
   cooldown 60s, daily loss limit 3%, max 6 trades/hour, 3-loss → 30 min pause,
   stale-entry guard 25%.
 - `lib/strategy.py` — the signal engine, now settings-driven. `CONFIRMATIONS` is
-  a list of 11 weighted vote functions (weights sum to 100): EMA Trend 14,
+  a list of 12 weighted vote functions (weights sum to 120): EMA Trend 14,
   Multi-Timeframe Trend 14, MACD 11, Market Structure 11, RSI 10, ADX 10,
-  Support/Resistance 10, VWAP 8, Bollinger 8, Price Action 8, Volume 6.
+  Support/Resistance 10, VWAP 8, Bollinger 8, Price Action 8, Volume 6,
+  Breakout Quality 10.
   Direction = sign of net vote, confidence = |net| × 1.2 capped 97.
   `plan_levels(dir, entry, snap, cfg)` builds SL (max of `atr_sl_mult`×ATR and
   the structure stop, capped 2×ATR) and TP (`base_rr` + ADX bonus, pulled back
-  before opposing S/R). 5 entry gates: confidence, ADX, ATR% band, R:R, not WAIT.
+  before opposing S/R). 10 entry gates: confidence, ADX, ATR% band, R:R, not WAIT,
+  not choppy, no opposing fake breakout, higher-timeframe alignment, extension, volume.
   `analyze()` also returns `last_closed` for the stale-entry guard. Adding a
   confirmation = append one function + weight.
 - `lib/engine.py` — wallet, trade lifecycle, background loop (3s). Evaluates all
@@ -154,7 +156,7 @@ Routes: `/login`, `/register` (`pages/AuthPage.tsx`), `/subscribe`
   EMA20/EMA50/VWAP/Bollinger, ReferenceLines for Entry/SL/TP (dashed when merely
   planned) **and a live price line** that tracks the current tick, coloured by
   direction and labelled with the price
-- `SignalPanel` — confidence bar, 5 entry gates, 11-confirmation breakdown, SL/TP
+- `SignalPanel` — confidence bar, 10 entry gates, 12-confirmation breakdown, SL/TP
   rationale
 - `WalletPanel` — wallet stats incl. today's P&L and max hold, active-trade card
   with entry/SL/TP/live, progress bar, held + auto-cut countdown, and
@@ -164,7 +166,7 @@ Routes: `/login`, `/register` (`pages/AuthPage.tsx`), `/subscribe`
 - `TradeHistory` — dense blotter, expandable "Why" row (opened / SL-TP / closed +
   management log)
 - `lib/speech.ts` — Web Speech API wrapper (no API key). Reads the signal summary,
-  all 11 confirmation comments, gate results and SL/TP rationale; auto-announces
+  all 12 confirmation comments, gate results and SL/TP rationale; auto-announces
   on direction change, trade open and trade close. Mute state in localStorage,
   and abbreviations are expanded phonetically (ATR → "A T R", MACD → "mac dee").
 - `lib/sound.ts` — WebAudio alert tones: rising two-tone on entry, rising triad on
@@ -179,6 +181,9 @@ Admin seeded each boot: `admin@goldterminal.app` / `Harsh@10576` (see
 subscription — granted by an admin, by a trial-days setting, or via Razorpay.
 `POST /api/engine/reset` wipes trades/signals and restores the $10,000 paper
 balance (subscribers only).
+
+Startup seeding is non-destructive: it creates missing defaults and indexes but
+never deletes legacy wallets or trades, which keeps Atlas data safe across pod restarts.
 
 ## Testing notes
 - Trades only appear when the live market genuinely produces an 80%+ setup, so

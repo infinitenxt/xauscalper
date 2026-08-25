@@ -65,12 +65,19 @@ export default function TickerBar({
           </div>
           <div className="leading-tight">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold tracking-tight text-slate-100">XAUUSDT</span>
+              <span
+                className="text-sm font-semibold tracking-tight text-slate-100"
+                data-testid="ticker-symbol"
+              >
+                {feed?.display_symbol ?? ticker?.symbol ?? "XAUUSDT"}
+              </span>
               <span className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
                 PAPER
               </span>
             </div>
-            <span className="text-[11px] text-slate-500">Gold / USDT · Binance</span>
+            <span className="text-[11px] text-slate-500" data-testid="ticker-market-description">
+              {feed?.is_proxy ? "Gold proxy / USDT · Binance" : "Gold / USDT · Binance"}
+            </span>
           </div>
         </div>
 

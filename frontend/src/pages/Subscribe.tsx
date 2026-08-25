@@ -160,7 +160,7 @@ export default function Subscribe() {
             Unlock the live scalping terminal
           </h2>
           <p className="mt-2 text-[12px] leading-relaxed text-slate-400" data-testid="paywall-message">
-            The terminal needs an active subscription. You get the 11-confirmation signal engine,
+            The terminal needs an active subscription. You get the 12-confirmation signal engine,
             automated paper trading with break-even, partial take-profit and trailing stops, AI trade
             explanations, voice announcements and strategy backtesting. Educational only — no real
             orders are ever placed and no signal is a guarantee.

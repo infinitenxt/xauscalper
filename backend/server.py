@@ -79,9 +79,6 @@ api_router.include_router(admin_router)
 api_router.include_router(analysis_router)
 api_router.include_router(trading_router)
 
-# Include the router in the main app
-app.include_router(api_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -96,3 +93,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Keep router inclusion last so every mounted API route is served.
+app.include_router(api_router)
