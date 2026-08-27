@@ -5,11 +5,14 @@ import {
   ArrowLeft,
   CreditCard,
   Globe,
+  HandCoins,
   KeyRound,
   Layers,
   LogOut,
   MailPlus,
   Monitor,
+  ServerCog,
+  TicketPercent,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +31,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
+import { AffiliateAdminPanel, CouponsPanel } from "@/components/AdminCommercePanels";
+import Mt5AdminPanel from "@/components/Mt5AdminPanel";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { errorText, useLogout, useMe } from "@/hooks/useAuth";
 import { rupees } from "@/lib/types";
@@ -142,7 +147,8 @@ export default function Admin() {
   const [keySecret, setKeySecret] = useState("");
   const [siteForm, setSiteForm] = useState({
     site_name: "", tagline: "", support_email: "", trial_days: 0,
-    allow_registration: true, maintenance_mode: false,
+    allow_registration: true, invite_mode_enabled: true, maintenance_mode: false,
+    affiliate_commission_pct: 20,
   });
   useEffect(() => {
     if (!site.data) return;
@@ -153,7 +159,9 @@ export default function Admin() {
       support_email: site.data.support_email,
       trial_days: site.data.trial_days,
       allow_registration: site.data.allow_registration,
+      invite_mode_enabled: site.data.invite_mode_enabled,
       maintenance_mode: site.data.maintenance_mode,
+      affiliate_commission_pct: site.data.affiliate_commission_pct,
     });
   }, [site.data]);
 
@@ -198,10 +206,13 @@ export default function Admin() {
         </div>
 
         <Tabs defaultValue="users">
-          <TabsList className="bg-[#111827]">
+          <TabsList className="h-auto flex-wrap bg-[#111827]">
             <TabsTrigger value="users" data-testid="tab-users"><Users className="size-3.5" /> Users</TabsTrigger>
             <TabsTrigger value="invites" data-testid="tab-invites"><MailPlus className="size-3.5" /> Invites</TabsTrigger>
             <TabsTrigger value="plans" data-testid="tab-plans"><Layers className="size-3.5" /> Plans</TabsTrigger>
+            <TabsTrigger value="coupons" data-testid="tab-coupons"><TicketPercent className="size-3.5" /> Coupons</TabsTrigger>
+            <TabsTrigger value="affiliate" data-testid="tab-affiliate"><HandCoins className="size-3.5" /> Affiliate</TabsTrigger>
+            <TabsTrigger value="mt5" data-testid="tab-mt5"><ServerCog className="size-3.5" /> MT5</TabsTrigger>
             <TabsTrigger value="payments" data-testid="tab-payments"><CreditCard className="size-3.5" /> Payments</TabsTrigger>
             <TabsTrigger value="keys" data-testid="tab-keys"><KeyRound className="size-3.5" /> Razorpay</TabsTrigger>
             <TabsTrigger value="site" data-testid="tab-site"><Globe className="size-3.5" /> Website</TabsTrigger>
@@ -301,10 +312,23 @@ export default function Admin() {
           {/* -------------------------------------------------------- invites */}
           <TabsContent value="invites" className="rounded-md border border-slate-800 bg-[#111827] p-4">
             <div className="space-y-4" data-testid="invites-panel">
-              <div className="rounded border border-amber-900/40 bg-amber-950/20 p-2.5 text-[11px] text-amber-200/80">
-                Sign-up is invite-only. Only the emails listed here can create an account — anyone
-                else gets turned away at registration.
+              <div className="rounded border border-amber-900/40 bg-amber-950/20 p-2.5 text-[11px] text-amber-200/80" data-testid="invite-mode-description">
+                {siteForm.invite_mode_enabled
+                  ? "Invite mode is ON. Only the emails listed here can create an account."
+                  : "Invite mode is OFF. Anyone can register; invites remain available for pre-approval."}
               </div>
+              <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                <Checkbox
+                  checked={siteForm.invite_mode_enabled}
+                  data-testid="invite-mode-switch"
+                  onCheckedChange={(value) => {
+                    const enabled = Boolean(value);
+                    setSiteForm((form) => ({ ...form, invite_mode_enabled: enabled }));
+                    saveSite.mutate({ invite_mode_enabled: enabled });
+                  }}
+                />
+                Invite-only registration {siteForm.invite_mode_enabled ? "ON" : "OFF"}
+              </label>
               <form
                 className="flex flex-wrap items-end gap-2"
                 data-testid="invite-form"
@@ -366,6 +390,18 @@ export default function Admin() {
             </div>
           </TabsContent>
 
+          <TabsContent value="coupons" className="rounded-md border border-slate-800 bg-[#111827] p-4">
+            <CouponsPanel plans={plans.data ?? []} />
+          </TabsContent>
+
+          <TabsContent value="affiliate" className="rounded-md border border-slate-800 bg-[#111827] p-4">
+            <AffiliateAdminPanel />
+          </TabsContent>
+
+          <TabsContent value="mt5" className="rounded-md border border-slate-800 bg-[#111827] p-4">
+            <Mt5AdminPanel />
+          </TabsContent>
+
           {/* ---------------------------------------------------------- plans */}
           <TabsContent value="plans" className="rounded-md border border-slate-800 bg-[#111827] p-4">
             <div className="grid gap-3 md:grid-cols-3" data-testid="admin-plans">
@@ -417,7 +453,7 @@ export default function Admin() {
               <Table data-testid="payments-table">
                 <TableHeader>
                   <TableRow className="border-slate-800 hover:bg-transparent">
-                    {["User", "Plan", "Amount", "Status", "Order", "Payment"].map((h) => (
+                    {["User", "Plan", "Amount", "Coupon", "Commission", "Status", "Order", "Payment"].map((h) => (
                       <TableHead key={h} className="h-8 text-[10px] uppercase tracking-wider text-slate-500">{h}</TableHead>
                     ))}
                   </TableRow>
@@ -428,6 +464,8 @@ export default function Admin() {
                       <TableCell className="text-slate-300">{p.email}</TableCell>
                       <TableCell className="text-slate-300">{p.plan_name}</TableCell>
                       <TableCell className="tabular-nums text-slate-200">{rupees(p.amount_inr)}</TableCell>
+                      <TableCell className="text-[10px] text-slate-400">{p.coupon_code ? `${p.coupon_code} · -${rupees(p.discount_inr)}` : "—"}</TableCell>
+                      <TableCell className="tabular-nums text-emerald-300">{p.affiliate_commission_inr ? rupees(p.affiliate_commission_inr) : "—"}</TableCell>
                       <TableCell>
                         <span className={cn("rounded px-1.5 py-0.5 text-[10px]", p.status === "paid" ? "bg-emerald-950 text-emerald-300" : "bg-slate-800 text-slate-400")}>{p.status}</span>
                       </TableCell>
@@ -504,6 +542,11 @@ export default function Admin() {
                 <Checkbox checked={siteForm.allow_registration} data-testid="site-allow-registration"
                   onCheckedChange={(v) => setSiteForm((f) => ({ ...f, allow_registration: Boolean(v) }))} />
                 Allow new registrations
+              </label>
+              <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                <Checkbox checked={siteForm.invite_mode_enabled} data-testid="site-invite-mode-enabled"
+                  onCheckedChange={(v) => setSiteForm((f) => ({ ...f, invite_mode_enabled: Boolean(v) }))} />
+                Require an admin invite when registration is open
               </label>
               <label className="flex items-center gap-2 text-[11px] text-slate-300">
                 <Checkbox checked={siteForm.maintenance_mode} data-testid="site-maintenance-mode"

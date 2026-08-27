@@ -248,3 +248,60 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   states what invalidates the setup and the main risk.
 - Wallet adds `profit_factor` and `max_drawdown_pct`; chart overlays EMA9/21/50/200, VWAP,
   Bollinger, entry/SL/TP plus break-even and trailing-stop lines.
+
+## Update — invite mode, affiliates, coupons and withdrawals
+- Admin Website/Invites settings now include `invite_mode_enabled`: ON keeps registration
+  invite-only; OFF allows open registration while the separate `allow_registration` switch can
+  still close registration completely. `GET /api/auth/registration-policy` keeps register-page
+  copy synchronized with both switches.
+- Every account has a permanent one-level referral code. `/register?ref=CODE` stores
+  `referred_by_user_id` once at account creation; invalid codes and self-referrals are rejected.
+  `GET /api/affiliate/summary` exposes the member's link, referred/paid counts and balances.
+- The global affiliate rate defaults to 20% and is adjustable in Admin → Affiliate. Commission is
+  credited from the final amount only after Razorpay signature verification, for every purchase
+  and renewal. Manual admin grants never create commission. `affiliate_earnings` is idempotent by
+  payment id and `affiliate_accounts` tracks earned, available, pending and paid balances.
+- Admin → Coupons supports percentage discount, total claim limit, expiry, active state and eligible
+  plans. Coupon claims are atomically reserved when a Razorpay order is created and converted to
+  used only after verified payment; the payment stores original amount, discount and coupon code.
+- Members can save bank account holder, bank, account number and IFSC on `/affiliate`, then request
+  any amount up to their available commission. Admin → Affiliate can approve, reject or mark each
+  request paid; rejection returns the reserved amount to available balance.
+- New collections: `coupons`, `affiliate_accounts`, `affiliate_earnings`,
+  `affiliate_withdrawals`. New routers: `routers/affiliate.py` and
+  `routers/admin_commerce.py`; billing remains the only path that creates paid commission.
+
+## Update — private MT5 Expert Advisor execution
+- Paper trading remains unchanged. Subscribed users can open `/mt5` and connect one private MT5
+  demo or live account through a custom Expert Advisor bridge. The app never stores the MT5 master
+  password: it issues a one-time, tenant-scoped bridge token, stores only its SHA-256 hash, and lets
+  the EA poll outbound over HTTPS. Disconnecting revokes the token.
+- Initial provider is the downloadable `frontend/public/GoldTerminalBridge.mq5`; MetaApi is a planned
+  optional second adapter after the EA rollout is validated. The EA requires the broker's MT5 terminal
+  on an always-on Windows VPS, Algo Trading enabled, the app origin added to MT5's WebRequest allowlist,
+  and the exact MT5 login/server entered in the web connection form.
+- Only the canonical XAU/USD family is permitted. The bridge accepts exact broker-discovered aliases
+  `XAUUSD`, `GOLD`, and short suffix forms such as `XAUUSD.m`; arbitrary instruments are rejected by
+  both backend and EA. One bot-managed position may be open per connected account.
+- Users choose a fixed lot with no SaaS/admin cap. Every entry still must satisfy the broker's volume
+  min/max/step, full-trading permission, free margin, spread (maximum 15% of ATR), directional SL/TP,
+  minimum stop distance, account trading permission, Algo Trading, session, daily-loss, hourly-trade,
+  signal-gate, and one-position checks.
+- Dashboard presence controls **new entries only**. `/` and `/mt5` heartbeat every 10 seconds; the
+  backend requires presence within 30 seconds both when queuing and when the EA polls an entry.
+  Closing/hiding the dashboard therefore blocks and cancels new entries. Existing positions continue
+  management regardless of presence.
+- The EA places broker-side SL and TP with every entry, then independently manages partial take-profit,
+  break-even, ATR trailing stop and the hard max-hold autocut on every tick/timer. The backend also
+  queues momentum-fade and time-cap exits. If the API is unavailable, broker SL/TP and local EA rules
+  continue; if the Windows VPS/MT5 terminal is offline, only broker-hosted SL/TP can execute.
+- Commands are tenant-bound and idempotent (`idempotency_key` unique), expire quickly for entries,
+  and move through pending → dispatched → confirmed/rejected/cancelled. The EA treats repeated entry
+  and close commands idempotently. Heartbeats reconcile account state and the current MT5 position.
+- Demo MT5 is included with a normal subscription. Live MT5 requires a separate `mt5_live` plan,
+  seeded as `mt5-live-monthly` and editable in Admin → MT5. Razorpay verification activates or renews
+  `mt5_live_subscription`; expiry disables new live entries. Admin can monitor all connected accounts
+  and remotely disable auto-entry without interrupting protective management.
+- New collections: `mt5_accounts`, `mt5_commands`, `mt5_positions`. New modules:
+  `models/mt5.py`, `lib/mt5_execution.py`, `routers/mt5.py`; the engine calls the MT5 coordinator each
+  cycle without coupling or disabling the paper-trading path.

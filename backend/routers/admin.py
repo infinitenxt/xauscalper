@@ -25,7 +25,7 @@ from models.accounts import (
     UserPatch,
     UserPublic,
 )
-from routers.billing import activate
+from routers.billing import activate, activate_mt5_live
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(auth.require_admin)])
 
@@ -35,8 +35,10 @@ SITE_DEFAULTS: Dict[str, Any] = {
     "tagline": "Educational XAUUSDT scalping intelligence",
     "support_email": "",
     "allow_registration": True,
+    "invite_mode_enabled": True,
     "maintenance_mode": False,
     "trial_days": 0,
+    "affiliate_commission_pct": 20.0,
     "razorpay_key_id": "",
     "razorpay_key_secret": "",
 }
@@ -56,8 +58,10 @@ def site_public(raw: Dict[str, Any]) -> SiteSettings:
         tagline=raw.get("tagline", ""),
         support_email=raw.get("support_email", ""),
         allow_registration=bool(raw.get("allow_registration", True)),
+        invite_mode_enabled=bool(raw.get("invite_mode_enabled", True)),
         maintenance_mode=bool(raw.get("maintenance_mode", False)),
         trial_days=int(raw.get("trial_days") or 0),
+        affiliate_commission_pct=float(raw.get("affiliate_commission_pct", 20.0)),
         razorpay_key_id=raw.get("razorpay_key_id", ""),
         razorpay_key_secret_set=bool(raw.get("razorpay_key_secret")),
         razorpay_enabled=bool(raw.get("razorpay_key_id") and raw.get("razorpay_key_secret")),
@@ -181,7 +185,11 @@ async def manage_subscription(user_id: str, body: GrantRequest) -> UserPublic:
         plan = await db.plans.find_one({"id": body.plan_id})
         if not plan:
             raise HTTPException(status_code=404, detail="plan not found")
-        await activate(user_id, {k: v for k, v in plan.items() if k != "_id"}, "admin_grant")
+        clean_plan = {k: v for k, v in plan.items() if k != "_id"}
+        if plan.get("product_type") == "mt5_live":
+            await activate_mt5_live(user_id, clean_plan, "admin_grant")
+        else:
+            await activate(user_id, clean_plan, "admin_grant")
     elif body.days:
         await activate(
             user_id,

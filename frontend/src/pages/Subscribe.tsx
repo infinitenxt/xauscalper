@@ -1,61 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Coins, Loader2, LogOut, ShieldCheck, Sparkles } from "lucide-react";
+import { Check, Coins, HandCoins, Loader2, LogOut, ShieldCheck, Sparkles, TicketPercent } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 import { apiGet, apiPost } from "@/lib/api";
 import { ME_KEY, errorText, useLogout, useMe } from "@/hooks/useAuth";
 import { rupees } from "@/lib/types";
-import type { BillingStatus, OrderResponse, Plan, SubscriptionInfo } from "@/lib/types";
+import { loadRazorpayCheckout } from "@/lib/razorpay";
+import type { BillingStatus, CouponPreview, OrderResponse, Plan, SubscriptionInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-interface RazorpayOptions {
-  key: string;
-  amount: number;
-  currency: string;
-  name: string;
-  description: string;
-  order_id: string;
-  prefill: { email: string; name: string };
-  theme: { color: string };
-  handler: (res: {
-    razorpay_order_id: string;
-    razorpay_payment_id: string;
-    razorpay_signature: string;
-  }) => void;
-  modal?: { ondismiss: () => void };
-}
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: RazorpayOptions) => { open: () => void };
-  }
-}
-
-const CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
-
-function loadCheckout(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (window.Razorpay) return resolve(true);
-    const existing = document.querySelector(`script[src="${CHECKOUT_SRC}"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve(!!window.Razorpay));
-      return;
-    }
-    const el = document.createElement("script");
-    el.src = CHECKOUT_SRC;
-    el.onload = () => resolve(!!window.Razorpay);
-    el.onerror = () => resolve(false);
-    document.body.appendChild(el);
-  });
-}
 
 export default function Subscribe() {
   const { data: me } = useMe();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const logout = useLogout();
+  const [couponCode, setCouponCode] = useState("");
+  const [coupon, setCoupon] = useState<CouponPreview | null>(null);
 
   const billing = useQuery({
     queryKey: ["billing", "status"],
@@ -78,10 +42,29 @@ export default function Subscribe() {
     onError: (err) => toast.error(errorText(err, "We could not verify that payment.")),
   });
 
+  const couponPreview = useMutation({
+    mutationFn: (code: string) => apiPost<CouponPreview>("/billing/coupon", { coupon_code: code }),
+    onSuccess: (value) => {
+      setCoupon(value);
+      setCouponCode(value.code);
+      toast.success(`${value.code} applied · ${value.discount_pct}% off eligible plans`);
+    },
+    onError: (err) => {
+      setCoupon(null);
+      toast.error(errorText(err, "Coupon could not be applied."));
+    },
+  });
+
   const checkout = useMutation({
-    mutationFn: (plan: Plan) => apiPost<OrderResponse>("/billing/order", { plan_id: plan.id }),
+    mutationFn: (plan: Plan) => {
+      const eligible = coupon && (!coupon.eligible_plan_ids.length || coupon.eligible_plan_ids.includes(plan.id));
+      return apiPost<OrderResponse>("/billing/order", {
+        plan_id: plan.id,
+        coupon_code: eligible ? coupon.code : undefined,
+      });
+    },
     onSuccess: async (order) => {
-      const ready = await loadCheckout();
+      const ready = await loadRazorpayCheckout();
       if (!ready || !window.Razorpay) {
         toast.error("Could not load the payment window. Check your connection and retry.");
         return;
@@ -145,6 +128,16 @@ export default function Subscribe() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => navigate("/affiliate")}
+              data-testid="go-affiliate-button"
+              className="border-slate-700 text-slate-300"
+            >
+              <HandCoins className="size-3.5" />
+              Affiliate
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => logout.mutate()}
               data-testid="logout-button"
               className="border-slate-700 text-slate-300"
@@ -162,8 +155,8 @@ export default function Subscribe() {
           <p className="mt-2 text-[12px] leading-relaxed text-slate-400" data-testid="paywall-message">
             The terminal needs an active subscription. You get the 12-confirmation signal engine,
             automated paper trading with break-even, partial take-profit and trailing stops, AI trade
-            explanations, voice announcements and strategy backtesting. Educational only — no real
-            orders are ever placed and no signal is a guarantee.
+            explanations, voice announcements and strategy backtesting. The built-in account is simulated;
+            optional MT5 execution is configured separately and no signal is a guarantee.
           </p>
           {sub && sub.status !== "none" ? (
             <p className="mt-3 rounded border border-slate-800 bg-slate-900/60 p-2.5 text-[11px] text-slate-300" data-testid="current-subscription">
@@ -173,6 +166,37 @@ export default function Subscribe() {
           ) : null}
         </div>
 
+        <form
+          className="mb-5 flex max-w-xl flex-wrap items-end gap-2 rounded-md border border-slate-800 bg-[#111827] p-3"
+          data-testid="coupon-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            couponPreview.mutate(couponCode.trim().toUpperCase());
+          }}
+        >
+          <div className="min-w-56 flex-1">
+            <label htmlFor="coupon-code" className="flex items-center gap-1 text-[11px] text-slate-300">
+              <TicketPercent className="size-3.5 text-amber-400" /> Coupon code
+            </label>
+            <Input
+              id="coupon-code"
+              value={couponCode}
+              onChange={(e) => { setCouponCode(e.target.value.toUpperCase()); setCoupon(null); }}
+              placeholder="SAVE20"
+              data-testid="coupon-code-input"
+              className="mt-1 border-slate-700 bg-slate-950 text-slate-100 uppercase"
+            />
+          </div>
+          <Button type="submit" size="sm" disabled={!couponCode.trim() || couponPreview.isPending} data-testid="apply-coupon-button">
+            Apply coupon
+          </Button>
+          {coupon ? (
+            <p className="w-full text-[11px] text-emerald-300" data-testid="coupon-applied-message">
+              {coupon.code}: {coupon.discount_pct}% off · {coupon.claims_remaining} claim(s) remaining
+            </p>
+          ) : null}
+        </form>
+
         {billing.isLoading ? (
           <div className="flex items-center gap-2 text-[12px] text-slate-400">
             <Loader2 className="size-4 animate-spin" /> Loading plans…
@@ -180,6 +204,10 @@ export default function Subscribe() {
         ) : (
           <div className="grid gap-4 md:grid-cols-3" data-testid="plan-grid">
             {(data?.plans ?? []).map((plan) => (
+              (() => {
+                const eligible = coupon && (!coupon.eligible_plan_ids.length || coupon.eligible_plan_ids.includes(plan.id));
+                const finalPrice = eligible ? plan.price_inr * (1 - coupon.discount_pct / 100) : plan.price_inr;
+                return (
               <div
                 key={plan.id}
                 className={cn(
@@ -197,11 +225,16 @@ export default function Subscribe() {
                 ) : null}
                 <h3 className="text-sm font-semibold text-slate-100">{plan.name}</h3>
                 <div className="mt-1 flex items-baseline gap-1">
-                  <span className="text-2xl font-bold tabular-nums text-amber-300">
-                    {rupees(plan.price_inr)}
+                  <span className="text-2xl font-bold tabular-nums text-amber-300" data-testid={`plan-price-${plan.id}`}>
+                    {rupees(finalPrice)}
                   </span>
                   <span className="text-[11px] text-slate-500">/ {plan.days} days</span>
                 </div>
+                {eligible ? (
+                  <p className="text-[10px] text-slate-500" data-testid={`plan-discount-${plan.id}`}>
+                    <span className="line-through">{rupees(plan.price_inr)}</span> · {coupon.code} applied
+                  </p>
+                ) : null}
                 <ul className="mt-3 flex-1 space-y-1.5">
                   {plan.features.map((f) => (
                     <li key={f} className="flex items-start gap-1.5 text-[11px] text-slate-400">
@@ -219,9 +252,11 @@ export default function Subscribe() {
                   {checkout.isPending || verify.isPending ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : null}
-                  {data?.razorpay_enabled ? `Subscribe · ${rupees(plan.price_inr)}` : "Payment unavailable"}
+                  {data?.razorpay_enabled ? `Subscribe · ${rupees(finalPrice)}` : "Payment unavailable"}
                 </Button>
               </div>
+                );
+              })()
             ))}
           </div>
         )}

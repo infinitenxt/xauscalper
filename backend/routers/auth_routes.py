@@ -6,12 +6,13 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from lib import auth
+from lib import affiliate as affiliate_lib, auth
 from lib.db import db
 from models.accounts import (
     AuthResponse,
     LoginRequest,
     PasswordChangeRequest,
+    RegistrationPolicy,
     RegisterRequest,
     UserPublic,
 )
@@ -23,6 +24,15 @@ async def _site() -> Dict[str, Any]:
     return await db.site_settings.find_one({"id": "main"}) or {}
 
 
+@router.get("/registration-policy", response_model=RegistrationPolicy)
+async def registration_policy() -> RegistrationPolicy:
+    site = await _site()
+    return RegistrationPolicy(
+        registration_open=bool(site.get("allow_registration", True)),
+        invite_mode_enabled=bool(site.get("invite_mode_enabled", True)),
+    )
+
+
 @router.post("/register", response_model=AuthResponse, status_code=201)
 async def register(body: RegisterRequest, request: Request, response: Response) -> AuthResponse:
     site = await _site()
@@ -30,13 +40,14 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
         raise HTTPException(status_code=403, detail="registration is currently closed")
 
     email = body.email.lower().strip()
+    invite_mode = bool(site.get("invite_mode_enabled", True))
     invite = await db.invites.find_one({"email": email})
-    if not invite:
+    if invite_mode and not invite:
         raise HTTPException(
             status_code=403,
             detail="this email has not been invited — ask the admin to send you an invite first",
         )
-    if invite.get("used"):
+    if invite_mode and invite and invite.get("used"):
         raise HTTPException(status_code=409, detail="that invite has already been used")
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="that email is already registered")
@@ -57,6 +68,15 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
             "expires_at": auth.now() + timedelta(days=trial_days),
         }
 
+    referrer = None
+    referral_code = str(body.referral_code or "").strip().upper()
+    if referral_code:
+        referrer = await db.users.find_one({"referral_code": referral_code})
+        if not referrer:
+            raise HTTPException(status_code=400, detail="referral code is invalid")
+        if referrer.get("email") == email:
+            raise HTTPException(status_code=400, detail="you cannot refer yourself")
+
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -66,11 +86,14 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
         "is_active": True,
         "created_at": auth.now(),
         "subscription": subscription,
+        "referral_code": await affiliate_lib.new_referral_code(body.username),
+        "referred_by_user_id": referrer.get("id") if referrer else None,
     }
     await db.users.insert_one(dict(user))
-    await db.invites.update_one(
-        {"email": email}, {"$set": {"used": True, "used_at": auth.now(), "user_id": user["id"]}}
-    )
+    if invite and not invite.get("used"):
+        await db.invites.update_one(
+            {"email": email}, {"$set": {"used": True, "used_at": auth.now(), "user_id": user["id"]}}
+        )
     token = await auth.create_session(user["id"], request)
     auth.set_cookie(response, token)
     return AuthResponse(

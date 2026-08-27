@@ -69,13 +69,21 @@ async def get_status_checks():
 
 from routers.admin import router as admin_router  # noqa: E402
 from routers.analysis import router as analysis_router  # noqa: E402
+from routers.admin_commerce import router as admin_commerce_router  # noqa: E402
+from routers.affiliate import router as affiliate_router  # noqa: E402
+from routers.analysis import router as analysis_router  # noqa: E402
 from routers.auth_routes import router as auth_router  # noqa: E402
 from routers.billing import router as billing_router  # noqa: E402
+from routers.mt5 import router as mt5_router  # noqa: E402
 from routers.trading import router as trading_router  # noqa: E402
 
 api_router.include_router(auth_router)
 api_router.include_router(billing_router)
 api_router.include_router(admin_router)
+api_router.include_router(analysis_router)
+api_router.include_router(admin_commerce_router)
+api_router.include_router(affiliate_router)
+api_router.include_router(mt5_router)
 api_router.include_router(analysis_router)
 api_router.include_router(trading_router)
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, Info, LogOut, ShieldCheck, X } from "lucide-react";
+import { Check, HandCoins, Info, LogOut, ServerCog, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLogout, useMe } from "@/hooks/useAuth";
@@ -332,6 +332,26 @@ export default function Dashboard() {
                 </div>
               </div>
               <ChangePasswordDialog compact />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/mt5")}
+                data-testid="mt5-link-button"
+                className="border-slate-700 text-slate-300 transition-colors duration-150 hover:text-amber-300"
+              >
+                <ServerCog className="size-3.5" />
+                MT5
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/affiliate")}
+                data-testid="affiliate-link-button"
+                className="border-slate-700 text-slate-300 transition-colors duration-150 hover:text-emerald-300"
+              >
+                <HandCoins className="size-3.5" />
+                Affiliate
+              </Button>
               {me?.role === "admin" ? (
                 <Button
                   variant="outline"

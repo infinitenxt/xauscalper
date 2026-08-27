@@ -36,6 +36,7 @@ PLANS: List[Dict[str, Any]] = [
         ],
         "is_active": True,
         "highlight": False,
+        "product_type": "base",
     },
     {
         "id": "quarterly",
@@ -50,6 +51,7 @@ PLANS: List[Dict[str, Any]] = [
         ],
         "is_active": True,
         "highlight": True,
+        "product_type": "base",
     },
     {
         "id": "yearly",
@@ -64,6 +66,22 @@ PLANS: List[Dict[str, Any]] = [
         ],
         "is_active": True,
         "highlight": False,
+        "product_type": "base",
+    },
+    {
+        "id": "mt5-live-monthly",
+        "name": "Live MT5 Add-on",
+        "price_inr": 1499.0,
+        "days": 30,
+        "features": [
+            "Live MT5 account execution",
+            "XAU/USD-only safety allowlist",
+            "Dashboard-presence entry control",
+            "EA-managed SL, TP, break-even, partials, trailing and autocut",
+        ],
+        "is_active": True,
+        "highlight": False,
+        "product_type": "mt5_live",
     },
 ]
 
@@ -73,8 +91,10 @@ SITE: Dict[str, Any] = {
     "tagline": "Educational XAUUSDT scalping intelligence",
     "support_email": "support@goldterminal.app",
     "allow_registration": True,
+    "invite_mode_enabled": True,
     "maintenance_mode": False,
     "trial_days": 0,
+    "affiliate_commission_pct": 20.0,
     "razorpay_key_id": "",
     "razorpay_key_secret": "",
 }
@@ -138,5 +158,16 @@ async def run() -> None:
         await db.trades.create_index([("user_id", 1), ("status", 1)])
         await db.presence.create_index("user_id", unique=True)
         await db.invites.create_index("email", unique=True)
+        await db.users.create_index("referral_code", unique=True, sparse=True)
+        await db.payments.create_index("order_id", unique=True, sparse=True)
+        await db.coupons.create_index("code", unique=True)
+        await db.affiliate_accounts.create_index("user_id", unique=True)
+        await db.affiliate_earnings.create_index("payment_id", unique=True)
+        await db.affiliate_withdrawals.create_index([("user_id", 1), ("created_at", -1)])
+        await db.mt5_accounts.create_index("user_id", unique=True)
+        await db.mt5_accounts.create_index("token_hash", unique=True, sparse=True)
+        await db.mt5_commands.create_index("idempotency_key", unique=True)
+        await db.mt5_commands.create_index([("account_id", 1), ("status", 1), ("created_at", 1)])
+        await db.mt5_positions.create_index([("account_id", 1), ("ticket", 1)], unique=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("index creation skipped: %s", exc)

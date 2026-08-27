@@ -304,6 +304,11 @@ export interface AuthResponse {
   message: string;
 }
 
+export interface RegistrationPolicy {
+  registration_open: boolean;
+  invite_mode_enabled: boolean;
+}
+
 export interface Plan {
   id: string;
   name: string;
@@ -312,6 +317,16 @@ export interface Plan {
   features: string[];
   is_active: boolean;
   highlight: boolean;
+  product_type: string;
+}
+
+export interface Mt5LiveEntitlement {
+  active: boolean;
+  plan_id: string | null;
+  plan_name: string | null;
+  started_at: string | null;
+  expires_at: string | null;
+  days_left: number;
 }
 
 export interface BillingStatus {
@@ -321,6 +336,16 @@ export interface BillingStatus {
   razorpay_key_id: string | null;
   currency: string;
   message: string;
+  mt5_live_plan: Plan | null;
+  mt5_live_entitlement: Mt5LiveEntitlement;
+}
+
+export interface CouponPreview {
+  code: string;
+  discount_pct: number;
+  eligible_plan_ids: string[];
+  claims_remaining: number;
+  expires_at: string;
 }
 
 export interface OrderResponse {
@@ -329,6 +354,9 @@ export interface OrderResponse {
   currency: string;
   key_id: string;
   plan: Plan;
+  original_amount_inr: number;
+  discount_inr: number;
+  coupon_code: string | null;
 }
 
 export interface SiteSettings {
@@ -336,8 +364,10 @@ export interface SiteSettings {
   tagline: string;
   support_email: string;
   allow_registration: boolean;
+  invite_mode_enabled: boolean;
   maintenance_mode: boolean;
   trial_days: number;
+  affiliate_commission_pct: number;
   razorpay_key_id: string;
   razorpay_key_secret_set: boolean;
   razorpay_enabled: boolean;
@@ -381,12 +411,141 @@ export interface PaymentRow {
   email: string;
   plan_id: string;
   plan_name: string;
+  product_type: string;
   amount_inr: number;
+  original_amount_inr: number | null;
+  discount_inr: number;
+  coupon_code: string | null;
+  affiliate_commission_inr: number;
   status: string;
   provider: string;
   order_id: string | null;
   payment_id: string | null;
   created_at: string | null;
+}
+
+export interface Mt5Position {
+  ticket: string;
+  symbol: string;
+  direction: string;
+  volume: number;
+  entry_price: number;
+  current_price: number;
+  sl: number;
+  tp: number;
+  profit: number;
+  opened_at: string | null;
+  updated_at: string | null;
+}
+
+export interface Mt5Command {
+  id: string;
+  action: string;
+  status: string;
+  symbol: string;
+  direction: string;
+  lots: number;
+  sl: number;
+  tp: number;
+  reason: string;
+  payload: Record<string, unknown>;
+  broker_ticket: string | null;
+  broker_message: string;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export interface Mt5Account {
+  id: string;
+  user_id: string;
+  user_email: string;
+  provider: string;
+  mode: string;
+  account_login: string;
+  broker_server: string;
+  status: string;
+  connected: boolean;
+  resolved_symbol: string;
+  lot_size: number;
+  auto_trade_enabled: boolean;
+  live_entitled: boolean;
+  trade_allowed: boolean;
+  algo_trading: boolean;
+  balance: number;
+  equity: number;
+  free_margin: number;
+  daily_profit: number;
+  volume_min: number;
+  volume_max: number;
+  volume_step: number;
+  last_seen_at: string | null;
+  last_error: string;
+  created_at: string | null;
+  position: Mt5Position | null;
+}
+
+export interface Mt5ConnectResponse {
+  account: Mt5Account;
+  bridge_token: string;
+  bridge_url: string;
+  setup_steps: string[];
+}
+
+export interface Coupon {
+  id: string;
+  code: string;
+  discount_pct: number;
+  claim_limit: number;
+  claims_used: number;
+  claims_reserved: number;
+  expires_at: string;
+  active: boolean;
+  eligible_plan_ids: string[];
+  created_at: string | null;
+}
+
+export interface BankDetailsPublic {
+  account_holder: string;
+  bank_name: string;
+  account_last4: string;
+  ifsc_code: string;
+  configured: boolean;
+}
+
+export interface AffiliateSummary {
+  referral_code: string;
+  referral_path: string;
+  commission_pct: number;
+  referred_users: number;
+  paid_referrals: number;
+  earned_total: number;
+  available_balance: number;
+  pending_withdrawal: number;
+  withdrawn_total: number;
+  bank: BankDetailsPublic;
+}
+
+export interface AffiliateEarning {
+  id: string;
+  referred_user_email: string;
+  plan_name: string;
+  purchase_amount_inr: number;
+  commission_pct: number;
+  commission_inr: number;
+  payment_id: string;
+  created_at: string | null;
+}
+
+export interface WithdrawalRow {
+  id: string;
+  user_id: string;
+  user_email: string;
+  amount_inr: number;
+  status: string;
+  bank: Record<string, string>;
+  note: string;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 // -------------------------------------------------------- sessions/backtest

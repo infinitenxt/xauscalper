@@ -101,6 +101,29 @@ def is_subscribed(user: Optional[Dict[str, Any]]) -> bool:
     return bool(exp and exp > now())
 
 
+def is_mt5_live_entitled(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    entitlement = user.get("mt5_live_subscription") or {}
+    exp = aware(entitlement.get("expires_at"))
+    return bool(entitlement.get("status") == "active" and exp and exp > now())
+
+
+def mt5_live_public(user: Dict[str, Any]) -> Dict[str, Any]:
+    entitlement = user.get("mt5_live_subscription") or {}
+    exp = aware(entitlement.get("expires_at"))
+    return {
+        "active": is_mt5_live_entitled(user),
+        "plan_id": entitlement.get("plan_id"),
+        "plan_name": entitlement.get("plan_name"),
+        "started_at": entitlement.get("started_at"),
+        "expires_at": entitlement.get("expires_at"),
+        "days_left": max(0, int((exp - now()).total_seconds() // 86400)) if exp else 0,
+    }
+
+
 def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
     sub = user.get("subscription") or {}
     exp = aware(sub.get("expires_at"))

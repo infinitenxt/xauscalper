@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Coins, Loader2 } from "lucide-react";
@@ -6,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
 import { errorText, useLogin, useRegister } from "@/hooks/useAuth";
+import { apiGet } from "@/lib/api";
+import type { RegistrationPolicy } from "@/lib/types";
 import { toast } from "sonner";
 
 interface Props {
@@ -21,6 +24,14 @@ export default function AuthPage({ mode }: Props) {
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [referralCode, setReferralCode] = useState(
+    () => new URLSearchParams(location.search).get("ref")?.toUpperCase() ?? "",
+  );
+  const policy = useQuery({
+    queryKey: ["registration-policy"],
+    queryFn: () => apiGet<RegistrationPolicy>("/auth/registration-policy"),
+    retry: false,
+  });
   const pending = login.isPending || register.isPending;
 
   const submit = (e: React.FormEvent) => {
@@ -40,7 +51,7 @@ export default function AuthPage({ mode }: Props) {
       );
     } else {
       register.mutate(
-        { email, username, password },
+        { email, username, password, referral_code: referralCode.trim() || undefined },
         {
           onSuccess: (res) => done(res.message, res.user.subscribed),
           onError: (err) => toast.error(errorText(err, "Could not create the account.")),
@@ -75,7 +86,11 @@ export default function AuthPage({ mode }: Props) {
             <p className="mt-0.5 text-[11px] text-slate-500">
               {isLogin
                 ? "One active login per account — signing in here signs out your other device."
-                : "Sign-up is invite-only — use the email address the admin invited. A subscription unlocks the live terminal."}
+                : policy.data?.registration_open === false
+                  ? "New registrations are currently closed by the administrator."
+                  : policy.data?.invite_mode_enabled === false
+                    ? "Registration is open. Add a referral code if another member invited you."
+                    : "Sign-up is invite-only — use the email address the admin invited. A subscription unlocks the live terminal."}
             </p>
           </div>
 
@@ -106,6 +121,22 @@ export default function AuthPage({ mode }: Props) {
                 data-testid="auth-username-input"
                 className="mt-1 border-slate-700 bg-slate-950 text-slate-100"
                 placeholder="goldscalper"
+              />
+            </div>
+          ) : null}
+
+          {!isLogin ? (
+            <div>
+              <Label htmlFor="auth-referral-code" className="text-[11px] text-slate-300">
+                Referral code <span className="text-slate-600">(optional)</span>
+              </Label>
+              <Input
+                id="auth-referral-code"
+                value={referralCode}
+                onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                data-testid="auth-referral-code-input"
+                className="mt-1 border-slate-700 bg-slate-950 text-slate-100 uppercase"
+                placeholder="GOLDXXXXXX"
               />
             </div>
           ) : null}

@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from lib import market, market_sessions, narrator, settings as settings_mod, strategy
+from lib import market, market_sessions, mt5_execution, narrator, settings as settings_mod, strategy
 from lib.db import db
 
 logger = logging.getLogger("engine")
@@ -692,13 +692,19 @@ async def cycle() -> None:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("manage trade %s failed: %s", trade.get("id"), exc)
 
-        # 2) Entries only for users whose dashboard is currently open.
+        active_users = await active_user_ids()
+        try:
+            await mt5_execution.process_cycle(primary, cfg, active_users)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MT5 execution cycle failed: %s", exc)
+
+        # 2) Paper entries only for users whose dashboard is currently open.
         if not primary or not primary.get("tradeable"):
-            for uid in await active_user_ids():
+            for uid in active_users:
                 _block_reason[uid] = "entry gates not met"
             return
 
-        for user_id in await active_user_ids():
+        for user_id in active_users:
             if user_id in managed:
                 continue
             g = await guards(user_id, cfg, present=True)
@@ -794,8 +800,8 @@ async def config() -> Dict[str, Any]:
         "loop_seconds": LOOP_SECONDS,
         "presence_window_seconds": PRESENCE_WINDOW,
         "disclaimer": (
-            "Educational paper trading only. No real orders are placed and no signal is a "
-            "guarantee — gold can move against any confirmed setup."
+            "The built-in account is educational paper trading. Real MT5 orders are placed only when a user "
+            "separately connects an MT5 account and enables MT5 auto-trading; no signal is a guarantee."
         ),
     }
 
