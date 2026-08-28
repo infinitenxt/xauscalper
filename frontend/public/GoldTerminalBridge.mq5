@@ -1,20 +1,22 @@
 #property copyright "Gold Paper Terminal"
-#property version   "1.00"
+#property version   "1.11"
 #property strict
 #property description "XAU/USD-only bridge. New entries come from the authenticated API; open-position protection runs locally."
 
 #include <Trade/Trade.mqh>
 
-input string BridgeUrl = "https://YOUR-DOMAIN/api/mt5/bridge";
+input string BridgeUrl = "https://trade.infinitenxt.com/api/mt5/bridge";
 input string BridgeToken = "PASTE-ONE-TIME-TOKEN";
 input string BrokerGoldSymbol = ""; // blank = discover XAUUSD/GOLD alias
 input int PollSeconds = 3;
 input ulong MagicNumber = 860081;
 input int MaxDeviationPoints = 80;
+input string EaVersion = "1.11";
 
 CTrade trade;
 string gold_symbol = "";
 string gv_prefix = "GPT_MT5_";
+string journal_file = "";
 
 string EscapeJson(string value)
 {
@@ -129,6 +131,42 @@ bool PositionByMagic(ulong &ticket)
    return false;
 }
 
+bool TradeRequestAccepted()
+{
+   uint code = trade.ResultRetcode();
+   return code == TRADE_RETCODE_DONE || code == TRADE_RETCODE_DONE_PARTIAL || code == TRADE_RETCODE_PLACED;
+}
+
+bool CommandWasExecuted(string command_id)
+{
+   int handle = FileOpen(journal_file, FILE_READ|FILE_TXT|FILE_ANSI|FILE_SHARE_READ|FILE_SHARE_WRITE);
+   if(handle == INVALID_HANDLE) return false;
+   bool found = false;
+   while(!FileIsEnding(handle))
+   {
+      if(FileReadString(handle) == command_id) { found = true; break; }
+   }
+   FileClose(handle);
+   return found;
+}
+
+void RememberExecutedCommand(string command_id)
+{
+   if(command_id == "" || CommandWasExecuted(command_id)) return;
+   int handle = FileOpen(journal_file, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_SHARE_READ);
+   if(handle == INVALID_HANDLE)
+      handle = FileOpen(journal_file, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_SHARE_READ);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Could not persist MT5 command journal: ", GetLastError());
+      return;
+   }
+   FileSeek(handle, 0, SEEK_END);
+   FileWrite(handle, command_id);
+   FileFlush(handle);
+   FileClose(handle);
+}
+
 double DailyProfit()
 {
    MqlDateTime parts;
@@ -142,6 +180,8 @@ double DailyProfit()
    {
       ulong ticket = HistoryDealGetTicket(i);
       if(ticket == 0) continue;
+      ENUM_DEAL_TYPE type = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+      if(type != DEAL_TYPE_BUY && type != DEAL_TYPE_SELL) continue;
       result += HistoryDealGetDouble(ticket, DEAL_PROFIT);
       result += HistoryDealGetDouble(ticket, DEAL_SWAP);
       result += HistoryDealGetDouble(ticket, DEAL_COMMISSION);
@@ -160,7 +200,8 @@ string PositionJson()
       ",\"current_price\":" + DoubleToString(PositionGetDouble(POSITION_PRICE_CURRENT), (int)SymbolInfoInteger(gold_symbol, SYMBOL_DIGITS)) +
       ",\"sl\":" + DoubleToString(PositionGetDouble(POSITION_SL), (int)SymbolInfoInteger(gold_symbol, SYMBOL_DIGITS)) +
       ",\"tp\":" + DoubleToString(PositionGetDouble(POSITION_TP), (int)SymbolInfoInteger(gold_symbol, SYMBOL_DIGITS)) +
-      ",\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2) + "}]";
+      ",\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2) +
+      ",\"opened_at\":" + (string)PositionGetInteger(POSITION_TIME) + "}]";
 }
 
 void SendHeartbeat()
@@ -174,7 +215,10 @@ void SendHeartbeat()
       ",\"resolved_symbol\":\"" + EscapeJson(gold_symbol) +
       "\",\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) +
       ",\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) +
+      ",\"margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) +
       ",\"free_margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) +
+      ",\"margin_level\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL), 2) +
+      ",\"account_currency\":\"" + EscapeJson(AccountInfoString(ACCOUNT_CURRENCY)) + "\"" +
       ",\"daily_profit\":" + DoubleToString(DailyProfit(), 2) +
       ",\"volume_min\":" + DoubleToString(SymbolInfoDouble(gold_symbol, SYMBOL_VOLUME_MIN), 4) +
       ",\"volume_max\":" + DoubleToString(SymbolInfoDouble(gold_symbol, SYMBOL_VOLUME_MAX), 4) +
@@ -182,6 +226,7 @@ void SendHeartbeat()
       ",\"trade_allowed\":" + (AccountInfoInteger(ACCOUNT_TRADE_ALLOWED) ? "true" : "false") +
       ",\"algo_trading\":" + (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) && MQLInfoInteger(MQL_TRADE_ALLOWED) ? "true" : "false") +
       ",\"terminal_build\":" + (string)TerminalInfoInteger(TERMINAL_BUILD) +
+      ",\"ea_version\":\"" + EscapeJson(EaVersion) + "\"" +
       ",\"positions\":" + PositionJson() + "}";
    string response;
    ApiPost("/heartbeat", body, response);
@@ -198,11 +243,11 @@ bool ValidVolume(double lots, string &message)
    return true;
 }
 
-void SaveManagement(double entry, double sl, string json)
+void SaveManagement(double entry, double sl, datetime opened, string json)
 {
    GlobalVariableSet(gv_prefix + "entry", entry);
    GlobalVariableSet(gv_prefix + "risk", MathAbs(entry - sl));
-   GlobalVariableSet(gv_prefix + "opened", (double)TimeCurrent());
+   GlobalVariableSet(gv_prefix + "opened", (double)opened);
    GlobalVariableSet(gv_prefix + "maxhold", JsonNumber(json, "max_hold_seconds", 900));
    GlobalVariableSet(gv_prefix + "be", JsonNumber(json, "breakeven_at_r", 0.8));
    GlobalVariableSet(gv_prefix + "partialr", JsonNumber(json, "partial_tp_at_r", 1.0));
@@ -212,46 +257,116 @@ void SaveManagement(double entry, double sl, string json)
    GlobalVariableSet(gv_prefix + "traildistance", JsonNumber(json, "trail_distance", 0.0));
 }
 
-bool ExecuteEntry(string json, string &message, ulong &ticket)
+void EnsureManagementState(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket)) return;
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double sl = PositionGetDouble(POSITION_SL);
+   if(!GlobalVariableCheck(gv_prefix + "entry")) GlobalVariableSet(gv_prefix + "entry", entry);
+   if(!GlobalVariableCheck(gv_prefix + "risk")) GlobalVariableSet(gv_prefix + "risk", MathAbs(entry - sl));
+   if(!GlobalVariableCheck(gv_prefix + "opened")) GlobalVariableSet(gv_prefix + "opened", (double)PositionGetInteger(POSITION_TIME));
+   if(!GlobalVariableCheck(gv_prefix + "maxhold")) GlobalVariableSet(gv_prefix + "maxhold", 900.0);
+   if(!GlobalVariableCheck(gv_prefix + "be")) GlobalVariableSet(gv_prefix + "be", 0.8);
+   if(!GlobalVariableCheck(gv_prefix + "partialr")) GlobalVariableSet(gv_prefix + "partialr", 1.0);
+   if(!GlobalVariableCheck(gv_prefix + "partialfraction")) GlobalVariableSet(gv_prefix + "partialfraction", 0.5);
+   if(!GlobalVariableCheck(gv_prefix + "partialdone")) GlobalVariableSet(gv_prefix + "partialdone", 0.0);
+   if(!GlobalVariableCheck(gv_prefix + "trailr")) GlobalVariableSet(gv_prefix + "trailr", 1.0);
+   if(!GlobalVariableCheck(gv_prefix + "traildistance")) GlobalVariableSet(gv_prefix + "traildistance", 0.8 * MathAbs(entry - sl));
+}
+
+string ExecuteEntry(string json, string &message, ulong &ticket)
 {
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED) || !AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))
-   { message = "trading or Algo Trading is disabled"; return false; }
+   { message = "trading or Algo Trading is disabled"; return "rejected"; }
    ulong existing;
-   if(PositionByMagic(existing)) { ticket = existing; message = "entry already executed; idempotent confirmation"; return true; }
+   if(PositionByMagic(existing)) { ticket = existing; message = "entry already executed; idempotent confirmation"; return "executed"; }
    string side = JsonString(json, "direction");
    double lots = JsonNumber(json, "lots");
-   double sl = JsonNumber(json, "sl");
-   double tp = JsonNumber(json, "tp");
-   double atr = JsonNumber(json, "atr");
-   if(!ValidVolume(lots, message)) return false;
+   double sl_distance = JsonNumber(json, "sl_dist");
+   double tp_distance = JsonNumber(json, "tp_dist");
+   if(side != "BUY" && side != "SELL") { message = "unsupported entry direction"; return "rejected"; }
+   if(!ValidVolume(lots, message)) return "rejected";
    ENUM_ORDER_TYPE type = side == "BUY" ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   double price = side == "BUY" ? SymbolInfoDouble(gold_symbol, SYMBOL_ASK) : SymbolInfoDouble(gold_symbol, SYMBOL_BID);
-   double spread = SymbolInfoDouble(gold_symbol, SYMBOL_ASK) - SymbolInfoDouble(gold_symbol, SYMBOL_BID);
-   if(atr > 0 && spread > atr * 0.15) { message = "spread exceeds 15% of ATR"; return false; }
-   if((side == "BUY" && !(sl < price && tp > price)) || (side == "SELL" && !(sl > price && tp < price)))
-   { message = "SL/TP direction is invalid"; return false; }
+   double price = side == "BUY"
+               ? SymbolInfoDouble(gold_symbol, SYMBOL_ASK)
+               : SymbolInfoDouble(gold_symbol, SYMBOL_BID);
+
+if(price <= 0)
+{
+   message = "invalid live market price";
+   return "rejected";
+}
+
+int stops = (int)SymbolInfoInteger(gold_symbol, SYMBOL_TRADE_STOPS_LEVEL);
+double point = SymbolInfoDouble(gold_symbol, SYMBOL_POINT);
+double min_stop_distance = stops * point;
+
+if(sl_distance <= 0 || tp_distance <= 0)
+{
+   message = "invalid SL/TP distance";
+   return "rejected";
+}
+
+// Broker minimum stop distance.
+// Never send SL/TP closer than SYMBOL_TRADE_STOPS_LEVEL.
+sl_distance = MathMax(sl_distance, min_stop_distance);
+tp_distance = MathMax(tp_distance, min_stop_distance);
+
+double sl = 0.0;
+double tp = 0.0;
+
+if(side == "BUY")
+{
+   sl = price - sl_distance;
+   tp = price + tp_distance;
+}
+else
+{
+   sl = price + sl_distance;
+   tp = price - tp_distance;
+}
+
+int digits = (int)SymbolInfoInteger(gold_symbol, SYMBOL_DIGITS);
+sl = NormalizeDouble(sl, digits);
+tp = NormalizeDouble(tp, digits);
+
+if((side == "BUY" && !(sl < price && tp > price)) ||
+   (side == "SELL" && !(sl > price && tp < price)))
+{
+   message = "SL/TP direction is invalid after distance calculation";
+   return "rejected";
+}
+
+if(sl <= 0 || tp <= 0 ||
+   MathAbs(price - sl) < min_stop_distance ||
+   MathAbs(price - tp) < min_stop_distance)
+{
+   message = "SL/TP violates broker stop distance";
+   return "rejected";
+}
    if((ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(gold_symbol, SYMBOL_TRADE_MODE) != SYMBOL_TRADE_MODE_FULL)
-   { message = "broker has not enabled full trading for the gold symbol"; return false; }
+   { message = "broker has not enabled full trading for the gold symbol"; return "rejected"; }
    double margin = 0.0;
    if(!OrderCalcMargin(type, gold_symbol, lots, price, margin) || margin > AccountInfoDouble(ACCOUNT_MARGIN_FREE))
-   { message = "insufficient free margin"; return false; }
-   int stops = (int)SymbolInfoInteger(gold_symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   double point = SymbolInfoDouble(gold_symbol, SYMBOL_POINT);
-   if(sl <= 0 || tp <= 0 || MathAbs(price - sl) < stops * point || MathAbs(price - tp) < stops * point)
-   { message = "SL/TP violates broker stop distance"; return false; }
+   { message = "insufficient free margin"; return "rejected"; }
+      if(sl <= 0 || tp <= 0 || MathAbs(price - sl) < stops * point || MathAbs(price - tp) < stops * point)
+   { message = "SL/TP violates broker stop distance"; return "rejected"; }
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(MaxDeviationPoints);
    trade.SetTypeFillingBySymbol(gold_symbol);
    bool ok = side == "BUY" ? trade.Buy(lots, gold_symbol, 0.0, sl, tp, "GPT bridge") : trade.Sell(lots, gold_symbol, 0.0, sl, tp, "GPT bridge");
    message = trade.ResultRetcodeDescription();
-   if(!ok) return false;
+   if(!ok || !TradeRequestAccepted()) return "failed";
    Sleep(200);
    if(PositionByMagic(ticket) && PositionSelectByTicket(ticket))
-      SaveManagement(PositionGetDouble(POSITION_PRICE_OPEN), sl, json);
-   return ticket > 0;
+   {
+      SaveManagement(PositionGetDouble(POSITION_PRICE_OPEN), sl, (datetime)PositionGetInteger(POSITION_TIME), json);
+      return "executed";
+   }
+   return "accepted";
 }
 
-void SendAck(string command_id, bool success, ulong ticket, string message)
+void SendAck(string command_id, string outcome, ulong ticket, string message)
 {
    double price = 0.0, volume = 0.0;
    if(ticket > 0 && PositionSelectByTicket(ticket))
@@ -259,8 +374,12 @@ void SendAck(string command_id, bool success, ulong ticket, string message)
       price = PositionGetDouble(POSITION_PRICE_OPEN);
       volume = PositionGetDouble(POSITION_VOLUME);
    }
+   bool success = outcome == "executed" || outcome == "accepted";
    string body = "{\"command_id\":\"" + EscapeJson(command_id) + "\",\"success\":" + (success ? "true" : "false") +
+      ",\"result\":\"" + EscapeJson(outcome) + "\"" +
       ",\"broker_ticket\":" + (ticket > 0 ? "\"" + (string)ticket + "\"" : "null") +
+      ",\"broker_deal\":" + (trade.ResultDeal() > 0 ? "\"" + (string)trade.ResultDeal() + "\"" : "null") +
+      ",\"broker_retcode\":" + (string)trade.ResultRetcode() +
       ",\"broker_message\":\"" + EscapeJson(message) + "\",\"filled_price\":" + DoubleToString(price, 5) +
       ",\"filled_volume\":" + DoubleToString(volume, 4) + "}";
    string response;
@@ -274,24 +393,51 @@ void PollCommand()
    string command_id = JsonString(response, "id");
    string action = JsonString(response, "action");
    if(command_id == "" || action == "") return;
-   bool success = false;
+   long expires_epoch = (long)JsonNumber(response, "expires_epoch", 0);
+   if(expires_epoch > 0 && TimeGMT() >= (datetime)expires_epoch)
+   {
+      SendAck(command_id, "rejected", 0, "entry command expired before local execution");
+      return;
+   }
+   string outcome = "rejected";
    string message = "unsupported command";
    ulong ticket = 0;
-   if(action == "ENTRY") success = ExecuteEntry(response, message, ticket);
+   if(action == "ENTRY")
+   {
+      if(CommandWasExecuted(command_id))
+      {
+         PositionByMagic(ticket);
+         outcome = "executed";
+         message = "command already executed; restored from local journal";
+      }
+      else outcome = ExecuteEntry(response, message, ticket);
+   }
    else if(action == "CLOSE")
    {
       ticket = (ulong)StringToInteger(JsonString(response, "ticket"));
       if(ticket == 0) ticket = (ulong)JsonNumber(response, "ticket", 0);
-      if(ticket == 0 || !PositionSelectByTicket(ticket)) { success = true; message = "position already closed; idempotent confirmation"; }
-      else { success = trade.PositionClose(ticket); message = trade.ResultRetcodeDescription(); }
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) { outcome = "executed"; message = "position already closed; idempotent confirmation"; }
+      else
+      {
+         bool requested = trade.PositionClose(ticket);
+         message = trade.ResultRetcodeDescription();
+         if(!requested || !TradeRequestAccepted()) outcome = "failed";
+         else
+         {
+            Sleep(200);
+            outcome = PositionSelectByTicket(ticket) ? "accepted" : "executed";
+         }
+      }
    }
-   SendAck(command_id, success, ticket, message);
+   if(outcome == "executed") RememberExecutedCommand(command_id);
+   SendAck(command_id, outcome, ticket, message);
 }
 
 void ManageOpenPosition()
 {
    ulong ticket;
    if(!PositionByMagic(ticket) || !PositionSelectByTicket(ticket)) return;
+   EnsureManagementState(ticket);
    double entry = PositionGetDouble(POSITION_PRICE_OPEN);
    double current = PositionGetDouble(POSITION_PRICE_CURRENT);
    double sl = PositionGetDouble(POSITION_SL);
@@ -354,6 +500,7 @@ int OnInit()
       return INIT_FAILED;
    }
    gv_prefix += (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + (string)MagicNumber + "_";
+   journal_file = "GPT_MT5_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + (string)MagicNumber + ".journal";
    trade.SetExpertMagicNumber(MagicNumber);
    EventSetTimer(MathMax(1, PollSeconds));
    SendHeartbeat();

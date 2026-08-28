@@ -13,9 +13,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { errorText, useMe } from "@/hooks/useAuth";
 import { loadRazorpayCheckout } from "@/lib/razorpay";
-import { rupees } from "@/lib/types";
+import { fmt, rupees } from "@/lib/types";
 import type { BillingStatus, Mt5Account, Mt5Command, Mt5ConnectResponse, OrderResponse, SubscriptionInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const brokerMoney = (account: Mt5Account, value: number) =>
+  account.account_currency ? `${account.account_currency} ${fmt(value, 2)}` : fmt(value, 2);
 
 export default function Mt5() {
   const navigate = useNavigate();
@@ -40,7 +43,12 @@ export default function Mt5() {
   const refresh = () => { void qc.invalidateQueries({ queryKey: ["mt5"] }); void qc.invalidateQueries({ queryKey: ["billing"] }); };
   const connect = useMutation({
     mutationFn: () => apiPost<Mt5ConnectResponse>("/mt5/account", { ...form, lot_size: Number(form.lot_size) }),
-    onSuccess: (result) => { setToken({ value: result.bridge_token, url: result.bridge_url, steps: result.setup_steps }); toast.success("MT5 connection created — finish setup in the EA"); refresh(); },
+    onSuccess: (result) => {
+      const url = result.bridge_url.startsWith("/") ? `${window.location.origin}${result.bridge_url}` : result.bridge_url;
+      setToken({ value: result.bridge_token, url, steps: result.setup_steps });
+      toast.success("MT5 connection created — finish setup in the EA");
+      refresh();
+    },
     onError: (err) => toast.error(errorText(err)),
   });
   const patchAccount = useMutation({
@@ -55,13 +63,13 @@ export default function Mt5() {
   });
   const verify = useMutation({
     mutationFn: (body: { plan_id: string; razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => apiPost<SubscriptionInfo>("/billing/verify", body),
-    onSuccess: () => { toast.success("Live MT5 add-on activated"); refresh(); },
+    onSuccess: () => { toast.success("MT5 Auto-Trading subscription activated"); refresh(); },
     onError: (err) => toast.error(errorText(err, "Could not verify the add-on payment.")),
   });
   const buyLive = useMutation({
     mutationFn: async () => {
       const plan = billing.data?.mt5_live_plan;
-      if (!plan) throw new Error("Live MT5 plan is unavailable");
+      if (!plan) throw new Error("MT5 Auto-Trading plan is unavailable");
       return apiPost<OrderResponse>("/billing/order", { plan_id: plan.id });
     },
     onSuccess: async (order) => {
@@ -76,24 +84,26 @@ export default function Mt5() {
         modal: { ondismiss: () => toast.message("Payment window closed.") },
       }).open();
     },
-    onError: (err) => toast.error(errorText(err, "Could not start Live MT5 checkout.")),
+    onError: (err) => toast.error(errorText(err, "Could not start MT5 Auto-Trading checkout.")),
   });
 
   const current = account.data;
-  const live = billing.data?.mt5_live_entitlement;
+  const entitlement = billing.data?.mt5_live_entitlement;
   const plan = billing.data?.mt5_live_plan;
   return (
     <div className="min-h-screen bg-[#0b0e14] p-4">
       <Toaster position="bottom-right" richColors />
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-800 bg-[#111827] p-4">
-          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private XAU/USD-only execution · one bot position · new entries require dashboard presence</p></div>
+          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private XAU/USD-only execution · one bot position · separate MT5 subscription</p></div>
           <Button variant="outline" size="sm" onClick={() => navigate("/")} data-testid="mt5-back-button" className="border-slate-700 text-slate-300"><ArrowLeft className="size-3.5" /> Terminal</Button>
         </header>
 
         <section className="rounded-md border border-rose-900/40 bg-rose-950/15 p-3 text-[11px] text-rose-200" data-testid="mt5-risk-warning"><ShieldAlert className="mr-1 inline size-4" />Live MT5 orders use real money. Broker SL/TP are placed with every entry. The EA continues break-even, partial close, trailing stop and autocut when this dashboard closes, but a VPS/terminal outage can delay non-broker exits.</section>
 
-        {!current ? <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+        <section className="rounded-md border border-amber-900/40 bg-amber-950/15 p-4" data-testid="mt5-live-plan-card"><p className="text-[10px] uppercase tracking-wider text-amber-400">Separate MT5 subscription</p><h2 className="mt-1 text-lg font-semibold text-slate-100">{plan?.name ?? "MT5 Auto-Trading"}</h2><p className="mt-1 text-2xl font-bold text-amber-300">{plan ? rupees(plan.price_inr) : "Unavailable"}<span className="text-[11px] font-normal text-slate-500"> / {plan?.days ?? 0} days</span></p><p className="mt-3 text-[11px] text-slate-400">{entitlement?.active ? `${me?.role === "admin" ? "Admin access" : `Active · ${entitlement.days_left} day(s) left`} · demo and live MT5 enabled` : "Required in addition to your normal subscription. One plan enables both demo and live MT5 auto-trading."}</p>{!entitlement?.active ? <Button className="mt-3" disabled={!plan || !billing.data?.razorpay_enabled || buyLive.isPending} onClick={() => buyLive.mutate()} data-testid="buy-mt5-live-button">Buy MT5 Auto-Trading</Button> : <div className="mt-3 flex items-center gap-2 text-[11px] text-emerald-300"><CheckCircle2 className="size-4" /> Demo and live MT5 enabled</div>}</section>
+
+        {!current ? <div>
           <form className="rounded-md border border-slate-800 bg-[#111827] p-4" onSubmit={(e) => { e.preventDefault(); connect.mutate(); }} data-testid="mt5-connect-form">
             <h2 className="text-sm font-semibold text-slate-100">Connect your private MT5 account</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -102,19 +112,18 @@ export default function Mt5() {
               <div><Label htmlFor="mt5-server" className="text-[11px] text-slate-300">Exact broker server</Label><Input id="mt5-server" required value={form.broker_server} onChange={(e) => setForm((v) => ({ ...v, broker_server: e.target.value }))} placeholder="Broker-Demo" data-testid="mt5-server-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
               <div><Label htmlFor="mt5-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-lot" type="number" min="0.001" step="0.001" required value={form.lot_size} onChange={(e) => setForm((v) => ({ ...v, lot_size: Number(e.target.value) }))} data-testid="mt5-lot-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
             </div>
-            {form.mode === "live" && !live?.active ? <p className="mt-3 text-[11px] text-amber-300" data-testid="mt5-live-required">A separate Live MT5 add-on is required before connecting this live account.</p> : null}
-            <Button className="mt-4" type="submit" disabled={connect.isPending || (form.mode === "live" && !live?.active)} data-testid="connect-mt5-button">{connect.isPending ? <Loader2 className="size-4 animate-spin" /> : <Power className="size-4" />} Create secure bridge</Button>
+            {!entitlement?.active ? <p className="mt-3 text-[11px] text-amber-300" data-testid="mt5-live-required">The separate MT5 Auto-Trading subscription is required for both demo and live accounts.</p> : null}
+            <Button className="mt-4" type="submit" disabled={connect.isPending || !entitlement?.active} data-testid="connect-mt5-button">{connect.isPending ? <Loader2 className="size-4 animate-spin" /> : <Power className="size-4" />} Create secure bridge</Button>
           </form>
-          <section className="rounded-md border border-amber-900/40 bg-amber-950/15 p-4" data-testid="mt5-live-plan-card"><p className="text-[10px] uppercase tracking-wider text-amber-400">Live execution entitlement</p><h2 className="mt-1 text-lg font-semibold text-slate-100">{plan?.name ?? "Live MT5 Add-on"}</h2><p className="mt-1 text-2xl font-bold text-amber-300">{plan ? rupees(plan.price_inr) : "Unavailable"}<span className="text-[11px] font-normal text-slate-500"> / {plan?.days ?? 0} days</span></p><p className="mt-3 text-[11px] text-slate-400">{live?.active ? `Active · ${live.days_left} day(s) left` : "Demo MT5 is included in your normal subscription. Live execution requires this add-on."}</p>{!live?.active ? <Button className="mt-3 w-full" disabled={!plan || !billing.data?.razorpay_enabled || buyLive.isPending} onClick={() => buyLive.mutate()} data-testid="buy-mt5-live-button">Buy live add-on</Button> : <div className="mt-3 flex items-center gap-2 text-[11px] text-emerald-300"><CheckCircle2 className="size-4" /> Live account enabled</div>}</section>
         </div> : (
           <>
             <section className="rounded-md border border-slate-800 bg-[#111827] p-4" data-testid="mt5-account-panel">
               <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-slate-500">Connected account</p><h2 className="mt-1 text-lg font-semibold text-slate-100">{current.account_login} · {current.broker_server}</h2><p className="text-[11px] text-slate-500">{current.mode.toUpperCase()} · {current.resolved_symbol || "waiting for symbol discovery"}</p></div><span className={cn("rounded px-2 py-1 text-[11px] font-semibold", current.connected ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300")} data-testid="mt5-connection-state">{current.connected ? "EA CONNECTED" : current.status.toUpperCase()}</span></div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">{[["Balance", rupees(current.balance)],["Equity", rupees(current.equity)],["Free margin", rupees(current.free_margin)],["Today", rupees(current.daily_profit)],["Broker min", current.volume_min || "—"],["Broker max", current.volume_max || "—"]].map(([label, value]) => <div key={String(label)} className="rounded border border-slate-800 bg-slate-950/40 p-2"><p className="text-[9px] uppercase text-slate-500">{label}</p><p className="text-sm font-semibold text-slate-200">{value}</p></div>)}</div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-4 lg:grid-cols-8">{[["Balance", brokerMoney(current, current.balance)],["Equity", brokerMoney(current, current.equity)],["Margin", brokerMoney(current, current.margin)],["Free margin", brokerMoney(current, current.free_margin)],["Margin level", current.margin_level ? `${fmt(current.margin_level, 1)}%` : "—"],["Today", brokerMoney(current, current.daily_profit)],["Broker min", current.volume_min || "—"],["Broker max", current.volume_max || "—"]].map(([label, value]) => <div key={String(label)} className="rounded border border-slate-800 bg-slate-950/40 p-2"><p className="text-[9px] uppercase text-slate-500">{label}</p><p className="text-sm font-semibold text-slate-200">{value}</p></div>)}</div>
               {current.last_error ? <p className="mt-3 text-[11px] text-amber-300" data-testid="mt5-account-error">{current.last_error}</p> : null}
-              <div className="mt-4 flex flex-wrap items-end gap-3"><div><Label htmlFor="mt5-current-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-current-lot" type="number" value={lot} onChange={(e) => setLot(e.target.value)} data-testid="mt5-current-lot-input" className="mt-1 w-36 border-slate-700 bg-slate-950 text-slate-100" /></div><Button size="sm" variant="outline" onClick={() => patchAccount.mutate({ lot_size: Number(lot) })} data-testid="save-mt5-lot-button" className="border-slate-700">Save lot</Button><label className="flex items-center gap-2 pb-1 text-[11px] text-slate-300"><Checkbox checked={current.auto_trade_enabled} onCheckedChange={(value) => patchAccount.mutate({ auto_trade_enabled: Boolean(value) })} data-testid="mt5-auto-trade-switch" />Auto-trade {current.auto_trade_enabled ? "ON" : "OFF"}</label><Button size="sm" variant="outline" onClick={() => disconnect.mutate()} data-testid="disconnect-mt5-button" className="ml-auto border-slate-700 text-rose-300">Disconnect</Button></div>
+              <div className="mt-4 flex flex-wrap items-end gap-3"><div><Label htmlFor="mt5-current-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-current-lot" type="number" value={lot} onChange={(e) => setLot(e.target.value)} data-testid="mt5-current-lot-input" className="mt-1 w-36 border-slate-700 bg-slate-950 text-slate-100" /></div><Button size="sm" variant="outline" onClick={() => patchAccount.mutate({ lot_size: Number(lot) })} data-testid="save-mt5-lot-button" className="border-slate-700">Save lot</Button><label className="flex items-center gap-2 pb-1 text-[11px] text-slate-300"><Checkbox checked={current.auto_trade_enabled} disabled={!entitlement?.active && !current.auto_trade_enabled} onCheckedChange={(value) => patchAccount.mutate({ auto_trade_enabled: Boolean(value) })} data-testid="mt5-auto-trade-switch" />Auto-trade {current.auto_trade_enabled ? "ON" : "OFF"}</label><Button size="sm" variant="outline" onClick={() => disconnect.mutate()} data-testid="disconnect-mt5-button" className="ml-auto border-slate-700 text-rose-300">Disconnect</Button></div>
             </section>
-            {current.position ? <section className="rounded-md border border-emerald-900/40 bg-emerald-950/10 p-4" data-testid="mt5-open-position"><h2 className="text-sm font-semibold text-slate-100">Live MT5 position</h2><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-6">{[["Side", current.position.direction],["Lots", current.position.volume],["Entry", current.position.entry_price],["SL", current.position.sl],["TP", current.position.tp],["P&L", rupees(current.position.profit)]].map(([label, value]) => <div key={String(label)}><p className="text-[9px] uppercase text-slate-500">{label}</p><p className="text-sm text-slate-200">{value}</p></div>)}</div><p className="mt-3 text-[10px] text-slate-500">The EA continues SL/TP, break-even, partial close, trailing stop and hard autocut even if the dashboard closes.</p></section> : null}
+            {current.position ? <section className="rounded-md border border-emerald-900/40 bg-emerald-950/10 p-4" data-testid="mt5-open-position"><h2 className="text-sm font-semibold text-slate-100">Live MT5 position</h2><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-6">{[["Side", current.position.direction],["Lots", current.position.volume],["Entry", current.position.entry_price],["SL", current.position.sl],["TP", current.position.tp],["P&L", rupees(current.position.profit)]].map(([label, value]) => <div key={String(label)}><p className="text-[9px] uppercase text-slate-500">{label}</p><p className="text-sm text-slate-200">{value}</p></div>)}</div><p className="mt-3 text-[10px] text-slate-500">Disconnect is available immediately. If used, app monitoring stops at once; broker SL/TP and this local EA continue managing the open trade.</p></section> : null}
           </>
         )}
 

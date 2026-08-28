@@ -36,6 +36,7 @@ import type {
   CandlesResponse,
   Dashboard as DashboardData,
   EngineConfig,
+  Mt5Account,
   SettingsPatch,
   Signal,
   Trade,
@@ -77,6 +78,13 @@ export default function Dashboard() {
     queryKey: ["candles", timeframe],
     queryFn: () => apiGet<CandlesResponse>(`/market/candles?timeframe=${timeframe}&limit=160`),
     refetchInterval: 5000,
+    retry: false,
+  });
+
+  const mt5 = useQuery({
+    queryKey: ["mt5", "account"],
+    queryFn: () => apiGet<Mt5Account | null>("/mt5/account"),
+    refetchInterval: 3000,
     retry: false,
   });
 
@@ -381,6 +389,7 @@ export default function Dashboard() {
 
         <ActivePositionPanel
           trade={data?.open_trade}
+          mt5Account={mt5.isError ? undefined : mt5.data}
           config={data?.config}
           onClose={(id) => closeTrade.mutate(id)}
           closing={closeTrade.isPending}

@@ -70,13 +70,13 @@ PLANS: List[Dict[str, Any]] = [
     },
     {
         "id": "mt5-live-monthly",
-        "name": "Live MT5 Add-on",
+        "name": "MT5 Auto-Trading",
         "price_inr": 1499.0,
         "days": 30,
         "features": [
-            "Live MT5 account execution",
+            "Demo and live MT5 account execution",
             "XAU/USD-only safety allowlist",
-            "Dashboard-presence entry control",
+            "Confidence-triggered automatic entries",
             "EA-managed SL, TP, break-even, partials, trailing and autocut",
         ],
         "is_active": True,
@@ -142,6 +142,22 @@ async def run() -> None:
     for plan in PLANS:
         if not await db.plans.find_one({"id": plan["id"]}):
             await db.plans.insert_one(dict(plan))
+    # Product migration: the former live-only add-on now covers both demo and
+    # live MT5 execution. Preserve any admin-edited price/duration/availability.
+    await db.plans.update_one(
+        {"id": "mt5-live-monthly"},
+        {
+            "$set": {
+                "name": "MT5 Auto-Trading",
+                "features": [
+                    "Demo and live MT5 account execution",
+                    "XAU/USD-only safety allowlist",
+                    "Confidence-triggered automatic entries",
+                    "EA-managed SL, TP, break-even, partials, trailing and autocut",
+                ],
+            }
+        },
+    )
 
     # --- site settings
     if not await db.site_settings.find_one({"id": "main"}):

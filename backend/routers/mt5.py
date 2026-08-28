@@ -59,12 +59,6 @@ async def _public(account: Dict[str, Any], user: Dict[str, Any] | None = None) -
     return Mt5Account(**data)
 
 
-async def _dashboard_present(user_id: str) -> bool:
-    presence = await db.presence.find_one({"user_id": user_id})
-    seen = auth.aware((presence or {}).get("last_seen"))
-    return bool(seen and (auth.now() - seen).total_seconds() <= 30)
-
-
 async def _bridge_account(authorization: str | None) -> Dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="bridge token required")
@@ -85,8 +79,8 @@ async def account_status(request: Request) -> Mt5Account | None:
 @router.post("/mt5/account", response_model=Mt5ConnectResponse)
 async def connect_account(body: Mt5ConnectRequest, request: Request) -> Mt5ConnectResponse:
     user = await auth.require_subscription(request)
-    if body.mode == "live" and not auth.is_mt5_live_entitled(user):
-        raise HTTPException(status_code=402, detail="the Live MT5 add-on is required for a live account")
+    if not auth.is_mt5_live_entitled(user):
+        raise HTTPException(status_code=402, detail="an active MT5 Auto-Trading subscription is required")
     existing = await db.mt5_accounts.find_one({"user_id": user["id"], "revoked": {"$ne": True}})
     if existing and await _position(existing["id"]):
         raise HTTPException(status_code=409, detail="close the current MT5 position before reconnecting")
@@ -110,18 +104,28 @@ async def connect_account(body: Mt5ConnectRequest, request: Request) -> Mt5Conne
         "algo_trading": False,
         "balance": 0.0,
         "equity": 0.0,
+        "margin": 0.0,
         "free_margin": 0.0,
+        "margin_level": 0.0,
+        "account_currency": "",
         "daily_profit": 0.0,
         "volume_min": 0.0,
         "volume_max": 0.0,
         "volume_step": 0.0,
+        "ea_version": "",
+        "last_poll_at": None,
+        "last_heartbeat_at": None,
         "last_seen_at": None,
         "last_error": "waiting for the MT5 Expert Advisor",
+        "entry_state": "waiting",
+        "entry_reason": "Waiting for a validated MT5 heartbeat",
         "created_at": existing.get("created_at") if existing else auth.now(),
         "updated_at": auth.now(),
     }
     await db.mt5_accounts.replace_one({"user_id": user["id"]}, doc, upsert=True)
-    bridge_url = f"{str(request.base_url).rstrip('/')}/api/mt5/bridge"
+    # Keep this host-neutral. The browser expands it against its own trusted origin,
+    # avoiding forwarded-host/header injection in the credential users paste into MT5.
+    bridge_url = "/api/mt5/bridge"
     return Mt5ConnectResponse(
         account=await _public(doc, user),
         bridge_token=token,
@@ -151,8 +155,8 @@ async def update_account(body: Mt5SettingsPatch, request: Request) -> Mt5Account
     if updates.get("auto_trade_enabled"):
         if not mt5_execution.connected(account):
             raise HTTPException(status_code=409, detail="MT5 bridge is offline")
-        if account.get("mode") == "live" and not auth.is_mt5_live_entitled(user):
-            raise HTTPException(status_code=402, detail="the Live MT5 add-on is required")
+        if not auth.is_mt5_live_entitled(user):
+            raise HTTPException(status_code=402, detail="an active MT5 Auto-Trading subscription is required")
         if not account.get("trade_allowed") or not account.get("algo_trading"):
             raise HTTPException(status_code=409, detail="enable trading and Algo Trading in MT5 first")
         valid, detail = mt5_execution.lot_valid({**account, **updates})
@@ -171,16 +175,29 @@ async def disconnect_account(request: Request) -> Dict[str, str]:
     account = await db.mt5_accounts.find_one({"user_id": user["id"], "revoked": {"$ne": True}})
     if not account:
         raise HTTPException(status_code=404, detail="MT5 account not found")
-    if await _position(account["id"]):
-        raise HTTPException(status_code=409, detail="close the MT5 position before disconnecting")
+    position = await _position(account["id"])
     await db.mt5_accounts.update_one(
         {"id": account["id"]},
         {"$set": {"revoked": True, "auto_trade_enabled": False, "status": "revoked", "updated_at": auth.now()}},
     )
     await db.mt5_commands.update_many(
-        {"account_id": account["id"], "status": {"$in": ["pending", "dispatched"]}},
+        {"account_id": account["id"], "status": {"$in": ["pending", "dispatched", "accepted"]}},
         {"$set": {"status": "cancelled", "completed_at": auth.now(), "broker_message": "account disconnected"}},
     )
+    if position:
+        await db.mt5_positions.update_one(
+            {"account_id": account["id"], "ticket": position["ticket"]},
+            {
+                "$set": {
+                    "detached": True,
+                    "detached_at": auth.now(),
+                    "detach_reason": "user immediately revoked the MT5 bridge",
+                }
+            },
+        )
+        return {
+            "message": "MT5 disconnected immediately. The app no longer monitors the open trade; broker SL/TP and the local EA continue managing it."
+        }
     return {"message": "MT5 account disconnected and bridge token revoked"}
 
 
@@ -199,12 +216,32 @@ async def bridge_heartbeat(
     body: BridgeHeartbeat, authorization: str | None = Header(default=None)
 ) -> Mt5Account:
     account = await _bridge_account(authorization)
-    if not hmac.compare_digest(str(account["account_login"]), body.account_login.strip()) or not hmac.compare_digest(
-        str(account["broker_server"]).lower(), body.broker_server.strip().lower()
-    ):
-        raise HTTPException(status_code=403, detail="EA account login/server does not match this connection")
+    expected_login = str(account["account_login"])
+    reported_login = body.account_login.strip()
+    expected_server = str(account["broker_server"])
+    reported_server = body.broker_server.strip()
+    if not hmac.compare_digest(expected_login, reported_login):
+        detail = f"EA login {reported_login} does not match connected login {expected_login}"
+        await db.mt5_accounts.update_one(
+            {"id": account["id"]},
+            {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
+        )
+        raise HTTPException(status_code=403, detail=detail)
+    if not hmac.compare_digest(expected_server.lower(), reported_server.lower()):
+        detail = f"EA server '{reported_server}' does not match connected server '{expected_server}'"
+        await db.mt5_accounts.update_one(
+            {"id": account["id"]},
+            {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
+        )
+        raise HTTPException(status_code=403, detail=detail)
     if (account["mode"] == "demo") != body.is_demo:
-        raise HTTPException(status_code=403, detail="EA demo/live mode does not match this connection")
+        reported_mode = "demo" if body.is_demo else "live"
+        detail = f"EA reports {reported_mode} mode but this connection is configured as {account['mode']}"
+        await db.mt5_accounts.update_one(
+            {"id": account["id"]},
+            {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
+        )
+        raise HTTPException(status_code=403, detail=detail)
     if not mt5_execution.xau_symbol(body.resolved_symbol):
         await db.mt5_accounts.update_one(
             {"id": account["id"]}, {"$set": {"status": "error", "last_error": "broker XAU/USD symbol not found"}}
@@ -217,7 +254,10 @@ async def bridge_heartbeat(
         "resolved_symbol": body.resolved_symbol.upper(),
         "balance": body.balance,
         "equity": body.equity,
+        "margin": body.margin,
         "free_margin": body.free_margin,
+        "margin_level": body.margin_level,
+        "account_currency": body.account_currency.upper(),
         "daily_profit": body.daily_profit,
         "volume_min": body.volume_min,
         "volume_max": body.volume_max,
@@ -225,11 +265,17 @@ async def bridge_heartbeat(
         "trade_allowed": body.trade_allowed,
         "algo_trading": body.algo_trading,
         "terminal_build": body.terminal_build,
+        "ea_version": body.ea_version,
+        "last_poll_at": auth.now(),
+        "last_heartbeat_at": auth.now(),
         "last_seen_at": auth.now(),
         "last_error": "" if body.trade_allowed and body.algo_trading else "trading or Algo Trading is disabled in MT5",
         "updated_at": auth.now(),
     }
     await db.mt5_accounts.update_one({"id": account["id"]}, {"$set": updates})
+    previous_positions = await db.mt5_positions.find(
+        {"account_id": account["id"], "status": "OPEN"}
+    ).to_list(10)
     open_tickets: List[str] = []
     for pos in body.positions:
         if not mt5_execution.xau_symbol(pos.symbol):
@@ -249,12 +295,57 @@ async def bridge_heartbeat(
             },
             upsert=True,
         )
+        unresolved_entry = await db.mt5_commands.find_one(
+            {
+                "account_id": account["id"],
+                "action": "ENTRY",
+                "status": {"$in": ["pending", "dispatched", "accepted"]},
+                "direction": pos.direction,
+                "$or": [{"broker_ticket": pos.ticket}, {"broker_ticket": None}, {"broker_ticket": ""}],
+            },
+            sort=[("created_at", -1)],
+        )
+        if unresolved_entry:
+            await db.mt5_commands.update_one(
+                {"id": unresolved_entry["id"]},
+                {
+                    "$set": {
+                        "status": "confirmed",
+                        "execution_result": "reconciled",
+                        "broker_ticket": pos.ticket,
+                        "completed_at": auth.now(),
+                    }
+                },
+            )
     close_query: Dict[str, Any] = {"account_id": account["id"], "status": "OPEN"}
     if open_tickets:
         close_query["ticket"] = {"$nin": open_tickets}
     await db.mt5_positions.update_many(
         close_query, {"$set": {"status": "CLOSED", "closed_at": auth.now(), "updated_at": auth.now()}}
     )
+    for previous in previous_positions:
+        if previous.get("ticket") in open_tickets:
+            continue
+        unresolved_close = await db.mt5_commands.find_one(
+            {
+                "account_id": account["id"],
+                "action": "CLOSE",
+                "status": {"$in": ["pending", "dispatched", "accepted"]},
+                "payload.ticket": previous.get("ticket"),
+            },
+            sort=[("created_at", -1)],
+        )
+        if unresolved_close:
+            await db.mt5_commands.update_one(
+                {"id": unresolved_close["id"]},
+                {
+                    "$set": {
+                        "status": "confirmed",
+                        "execution_result": "reconciled",
+                        "completed_at": auth.now(),
+                    }
+                },
+            )
     fresh = await db.mt5_accounts.find_one({"id": account["id"]}) or {**account, **updates}
     return await _public(fresh)
 
@@ -262,7 +353,7 @@ async def bridge_heartbeat(
 @router.post("/mt5/bridge/poll", response_model=BridgePollResponse)
 async def bridge_poll(authorization: str | None = Header(default=None)) -> BridgePollResponse:
     account = await _bridge_account(authorization)
-    await db.mt5_accounts.update_one({"id": account["id"]}, {"$set": {"last_seen_at": auth.now()}})
+    await db.mt5_accounts.update_one({"id": account["id"]}, {"$set": {"last_poll_at": auth.now()}})
     while True:
         command = await db.mt5_commands.find_one(
             {"account_id": account["id"], "status": {"$in": ["pending", "dispatched"]}},
@@ -272,16 +363,18 @@ async def bridge_poll(authorization: str | None = Header(default=None)) -> Bridg
             return BridgePollResponse(command=None, server_time=auth.now())
         expires = auth.aware(command.get("expires_at"))
         user = await db.users.find_one({"id": account["user_id"]}) if command["action"] == "ENTRY" else None
+        expired = bool(expires and expires <= auth.now())
         entry_blocked = command["action"] == "ENTRY" and (
-            (expires and expires <= auth.now())
+            expired
             or not account.get("auto_trade_enabled")
-            or not await _dashboard_present(account["user_id"])
-            or (account.get("mode") == "live" and not auth.is_mt5_live_entitled(user))
+            or not auth.is_subscribed(user)
+            or not auth.is_mt5_live_entitled(user)
         )
         if entry_blocked:
+            status = "expired" if expired else "cancelled"
             await db.mt5_commands.update_one(
                 {"id": command["id"]},
-                {"$set": {"status": "cancelled", "completed_at": auth.now(), "broker_message": "entry blocked: dashboard closed, entitlement missing, expired, or auto-trading disabled"}},
+                {"$set": {"status": status, "completed_at": auth.now(), "broker_message": "entry blocked: normal/MT5 entitlement missing, command expired, or auto-trading disabled"}},
             )
             continue
         updated = await db.mt5_commands.find_one_and_update(
@@ -298,14 +391,23 @@ async def bridge_ack(body: BridgeAck, authorization: str | None = Header(default
     command = await db.mt5_commands.find_one({"id": body.command_id, "account_id": account["id"]})
     if not command:
         raise HTTPException(status_code=404, detail="command not found")
-    status = "confirmed" if body.success else "rejected"
+    result = body.result
+    if result is None:
+        if body.success is None:
+            raise HTTPException(status_code=422, detail="result or success is required")
+        result = "executed" if body.success else "rejected"
+    status = "confirmed" if result == "executed" else "accepted" if result == "accepted" else "rejected"
+    if command.get("status") in ("confirmed", "cancelled", "expired"):
+        return Mt5Command(**_clean(command))
     updated = await db.mt5_commands.find_one_and_update(
-        {"id": command["id"], "status": {"$ne": "confirmed"}},
+        {"id": command["id"], "status": {"$in": ["pending", "dispatched", "accepted", "rejected"]}},
         {
             "$set": {
                 "status": status,
+                "execution_result": result,
                 "broker_ticket": body.broker_ticket,
                 "broker_deal": body.broker_deal,
+                "broker_retcode": body.broker_retcode,
                 "broker_message": body.broker_message[:500],
                 "filled_price": body.filled_price,
                 "filled_volume": body.filled_volume,

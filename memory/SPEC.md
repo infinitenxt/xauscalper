@@ -298,10 +298,49 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
 - Commands are tenant-bound and idempotent (`idempotency_key` unique), expire quickly for entries,
   and move through pending → dispatched → confirmed/rejected/cancelled. The EA treats repeated entry
   and close commands idempotently. Heartbeats reconcile account state and the current MT5 position.
-- Demo MT5 is included with a normal subscription. Live MT5 requires a separate `mt5_live` plan,
-  seeded as `mt5-live-monthly` and editable in Admin → MT5. Razorpay verification activates or renews
-  `mt5_live_subscription`; expiry disables new live entries. Admin can monitor all connected accounts
-  and remotely disable auto-entry without interrupting protective management.
+- MT5 execution is separate from the normal terminal subscription. Both are required: the normal plan
+  supplies dashboard signals, while one `mt5_live` product (user-facing name **MT5 Auto-Trading**,
+  ₹1,499/30 days) unlocks both demo and live MT5 execution. Razorpay verification activates or renews
+  the existing `mt5_live_subscription` entitlement for backward payment compatibility. Expiry blocks
+  all new MT5 entries but never interrupts management of an already-open position.
 - New collections: `mt5_accounts`, `mt5_commands`, `mt5_positions`. New modules:
   `models/mt5.py`, `lib/mt5_execution.py`, `routers/mt5.py`; the engine calls the MT5 coordinator each
   cycle without coupling or disabling the paper-trading path.
+
+## Update — MT5 bridge hardening
+- The EA contract now exposes command idempotency keys and absolute expiry epochs. The EA rejects a
+  stale entry locally, keeps an account-scoped execution journal across terminal restarts, and checks
+  the broker trade retcode instead of treating the `CTrade` boolean as proof of execution.
+- Acknowledgements distinguish `accepted` from `executed`; only executed or heartbeat-reconciled
+  commands become confirmed. Heartbeats reconcile both newly observed positions and completed closes,
+  and report the EA version plus the broker position open time.
+- Local autocut is restart-safe: missing terminal management globals are reconstructed from the broker
+  position's original open time and protective levels. The backend therefore also receives a usable
+  `opened_at` for redundant time-cap and momentum-fade management.
+- Bridge setup returns a host-neutral API path; the browser expands it using its trusted current origin
+  before displaying the one-time token. Demo and live accounts launch together, demo remains in the base
+  subscription, and live execution remains a separate monthly add-on.
+- Connection health is based only on a validated account heartbeat, never command polling. Poll and
+  heartbeat timestamps are tracked separately, and rejected login/server/demo-live bindings persist an
+  exact user-visible error instead of showing a false green connection with zero broker balances.
+
+## Update — confidence-only MT5 entries and dashboard telemetry
+- MT5 entries now use the configured confidence threshold as the only strategy-quality gate. Session,
+  presence, `signal.tradeable`, daily-loss and hourly-count filters remain part of paper trading but no
+  longer suppress an MT5 command. Mandatory execution controls still apply: connected/authorized EA,
+  user and global auto-trade switches, entitlement, XAUUSD/GOLD alias, one open position, valid broker
+  lot size, free margin, account trading permission, and directional broker-side SL/TP.
+- Each MT5 account records an `entry_state` and exact `entry_reason` every engine cycle, so a qualified
+  signal is visibly waiting, blocked, queued or in-position rather than silently skipped.
+- The dashboard top position panel is split into Paper Engine and MT5 Live Terminal sections. The MT5
+  section refreshes every 3 seconds and shows account currency, balance, equity, used/free margin,
+  margin level, connection state, broker symbol/lot, entry status, and live position entry/SL/TP/current
+  price/P&L/R/progress/age. EA heartbeats now include broker currency and margin telemetry.
+- The bridge poll no longer repeats the removed dashboard-presence gate. A confidence command cancelled
+  or expired by a temporary control-plane condition is safely re-armed with the same command id and
+  idempotency key, allowing the EA's persistent journal to prevent duplicate fills. EA v1.11 also excludes
+  deposits/withdrawals from today's trading P&L.
+- Users may hard-disconnect an MT5 bridge even with an open position or in-flight command. Disconnect
+  immediately revokes the token, disables entries, cancels pending/dispatched/accepted commands and marks
+  the last known open position as detached for audit. From that moment the app has no telemetry or remote
+  control; only broker-hosted SL/TP and the already-running local EA continue protective management.

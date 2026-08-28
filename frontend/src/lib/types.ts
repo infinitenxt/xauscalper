@@ -440,6 +440,7 @@ export interface Mt5Position {
 
 export interface Mt5Command {
   id: string;
+  idempotency_key: string;
   action: string;
   status: string;
   symbol: string;
@@ -450,8 +451,13 @@ export interface Mt5Command {
   reason: string;
   payload: Record<string, unknown>;
   broker_ticket: string | null;
+  broker_deal: string | null;
+  broker_retcode: number | null;
+  execution_result: string;
   broker_message: string;
   created_at: string | null;
+  expires_at: string | null;
+  expires_epoch: number;
   completed_at: string | null;
 }
 
@@ -473,13 +479,21 @@ export interface Mt5Account {
   algo_trading: boolean;
   balance: number;
   equity: number;
+  margin: number;
   free_margin: number;
+  margin_level: number;
+  account_currency: string;
   daily_profit: number;
   volume_min: number;
   volume_max: number;
   volume_step: number;
+  ea_version: string;
+  last_poll_at: string | null;
+  last_heartbeat_at: string | null;
   last_seen_at: string | null;
   last_error: string;
+  entry_state: string;
+  entry_reason: string;
   created_at: string | null;
   position: Mt5Position | null;
 }

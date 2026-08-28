@@ -35,6 +35,7 @@ class Mt5Position(BaseModel):
 
 class Mt5Command(BaseModel):
     id: str
+    idempotency_key: str = ""
     action: str
     status: str
     symbol: str
@@ -45,8 +46,13 @@ class Mt5Command(BaseModel):
     reason: str = ""
     payload: Dict[str, object] = Field(default_factory=dict)
     broker_ticket: Optional[str] = None
+    broker_deal: Optional[str] = None
+    broker_retcode: Optional[int] = None
+    execution_result: str = ""
     broker_message: str = ""
     created_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    expires_epoch: int = 0
     completed_at: Optional[datetime] = None
 
 
@@ -68,13 +74,21 @@ class Mt5Account(BaseModel):
     algo_trading: bool = False
     balance: float = 0.0
     equity: float = 0.0
+    margin: float = 0.0
     free_margin: float = 0.0
+    margin_level: float = 0.0
+    account_currency: str = ""
     daily_profit: float = 0.0
     volume_min: float = 0.0
     volume_max: float = 0.0
     volume_step: float = 0.0
+    ea_version: str = ""
+    last_poll_at: Optional[datetime] = None
+    last_heartbeat_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
     last_error: str = ""
+    entry_state: str = "waiting"
+    entry_reason: str = "Waiting for a qualifying signal"
     created_at: Optional[datetime] = None
     position: Optional[Mt5Position] = None
 
@@ -106,7 +120,10 @@ class BridgeHeartbeat(BaseModel):
     resolved_symbol: str
     balance: float
     equity: float
+    margin: float = 0.0
     free_margin: float
+    margin_level: float = 0.0
+    account_currency: str = Field(default="", max_length=12)
     daily_profit: float = 0.0
     volume_min: float = Field(gt=0)
     volume_max: float = Field(gt=0)
@@ -114,6 +131,7 @@ class BridgeHeartbeat(BaseModel):
     trade_allowed: bool
     algo_trading: bool
     terminal_build: int = 0
+    ea_version: str = Field(default="", max_length=32)
     positions: List[BridgePosition] = Field(default_factory=list)
 
 
@@ -124,9 +142,11 @@ class BridgePollResponse(BaseModel):
 
 class BridgeAck(BaseModel):
     command_id: str
-    success: bool
+    success: Optional[bool] = None
+    result: Optional[Literal["accepted", "executed", "rejected", "failed"]] = None
     broker_ticket: Optional[str] = None
     broker_deal: Optional[str] = None
+    broker_retcode: Optional[int] = None
     broker_message: str = ""
     filled_price: Optional[float] = None
     filled_volume: Optional[float] = None
