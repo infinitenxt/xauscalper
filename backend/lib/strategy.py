@@ -1,13 +1,17 @@
-"""Signal engine: multi-confirmation confluence scoring for gold.
+"""Trading strategy engine.
 
-Design: each *confirmation* is an independent, weighted directional vote in
-[-1, +1]. Weights sum to 100 so the net score is already a percentage. Direction
-comes from the sign of the net vote, confidence from its magnitude. Risk filters
-are separate hard gates — a high confidence score alone never opens a trade.
+Multi-confirmation confluence strategy for BTCUSDT.
 
-Adding a new confirmation = append one function to CONFIRMATIONS and give it a
-weight. Nothing else changes.
+The engine:
+- combines independent directional confirmations
+- uses MTF trend confirmation
+- filters weak/choppy/overextended setups
+- creates ATR + structure based initial SL/TP distances
+- exposes trailing-stop settings for the execution layer
+
+SL distances are PRICE DISTANCES, not absolute prices.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -15,16 +19,55 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from lib import indicators
 from lib.market import INTERVAL_MINUTES
 
-# ---------------------------------------------------------------- tuning knobs
+
+# =====================================================================
+# CONFIGURATION
+# =====================================================================
+
 CONFIDENCE_THRESHOLD = 80.0
+
 MIN_ADX = 20.0
-MIN_RR = 1.3
+MIN_RR = 1.30
+
 RISK_PER_TRADE = 0.01
-BASE_RR = 1.4
-ATR_SL_MULT = 0.9
+
+BASE_RR = 1.50
+
+# Initial SL = ATR × this multiplier
+ATR_SL_MULT = 1.20
+
+# Volatility filter
 MIN_ATR_PCT = 0.010
-MAX_ATR_PCT = 1.600
+MAX_ATR_PCT = 5.000
+
 TRADE_COOLDOWN_SEC = 60
+
+
+# ---------------------------------------------------------------------
+# TRAILING STOP
+# ---------------------------------------------------------------------
+
+TRAILING_ENABLED = True
+
+# Start protecting profit after price reaches this many R.
+TRAIL_START_R = 1.0
+
+# At 1R, move SL to BE + small buffer.
+BREAKEVEN_R = 1.0
+
+# Minimum profit locked after BE activation.
+PROFIT_LOCK_R = 0.10
+
+# Normal trailing distance = ATR × multiplier.
+TRAIL_ATR_MULT = 0.80
+
+# Never allow trailing SL to move backwards.
+TRAIL_ONLY_FORWARD = True
+
+
+# =====================================================================
+# MULTI TIMEFRAME MAP
+# =====================================================================
 
 MTF_MAP = {
     "1m": ["1m", "5m", "15m", "30m", "1h"],
@@ -34,12 +77,21 @@ MTF_MAP = {
     "1h": ["1h"],
 }
 
+
 Snapshot = Dict[str, object]
 
 
+# =====================================================================
+# HELPERS
+# =====================================================================
+
 def _f(snap: Snapshot, key: str) -> Optional[float]:
-    v = snap.get(key)
-    return float(v) if isinstance(v, (int, float)) else None
+    value = snap.get(key)
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    return None
 
 
 def _vote(
@@ -49,65 +101,92 @@ def _vote(
     state: str,
     detail: str,
 ) -> Dict[str, object]:
+
+    bias = max(-1.0, min(1.0, bias))
+
     return {
         "name": name,
         "weight": weight,
-        "vote": round(max(-1.0, min(1.0, bias)), 3),
+        "vote": round(bias, 3),
         "direction": (
             "BULLISH"
             if bias > 0.15
-            else ("BEARISH" if bias < -0.15 else "NEUTRAL")
+            else (
+                "BEARISH"
+                if bias < -0.15
+                else "NEUTRAL"
+            )
         ),
         "state": state,
         "detail": detail,
     }
 
 
-# ------------------------------------------------------------- confirmations
-def c_ema_trend(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    p, e20, e50 = _f(s, "price"), _f(s, "ema20"), _f(s, "ema50")
-    e200 = _f(s, "ema200")
+# =====================================================================
+# CONFIRMATIONS
+# =====================================================================
 
-    if None in (p, e20, e50):
+def c_ema_trend(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
+
+    price = _f(s, "price")
+    ema20 = _f(s, "ema20")
+    ema50 = _f(s, "ema50")
+    ema200 = _f(s, "ema200")
+
+    if None in (price, ema20, ema50):
         return _vote(
             0,
             14,
             "EMA Trend",
             "n/a",
-            "not enough history for EMA 20/50",
+            "not enough history",
         )
 
     bias = 0.0
-    bias += 0.5 if e20 > e50 else -0.5  # type: ignore[operator]
-    bias += 0.3 if p > e20 else -0.3  # type: ignore[operator]
 
-    if e200 is not None:
-        bias += 0.2 if p > e200 else -0.2  # type: ignore[operator]
+    bias += 0.5 if ema20 > ema50 else -0.5
+    bias += 0.3 if price > ema20 else -0.3
 
-    state = f"EMA20 {e20:.2f} / EMA50 {e50:.2f}"
+    if ema200 is not None:
+        bias += 0.2 if price > ema200 else -0.2
 
-    detail = (
-        f"Price {p:.2f} is {'above' if p > e20 else 'below'} EMA20 and EMA20 is "
-        f"{'above' if e20 > e50 else 'below'} EMA50 — net EMA read is "
-        f"{'bullish' if bias > 0 else 'bearish'}."
+    return _vote(
+        bias,
+        14,
+        "EMA Trend",
+        f"EMA20 {ema20:.2f} / EMA50 {ema50:.2f}",
+        (
+            f"Price is {'above' if price > ema20 else 'below'} EMA20 "
+            f"and EMA20 is {'above' if ema20 > ema50 else 'below'} EMA50."
+        ),
     )
 
-    return _vote(bias, 14, "EMA Trend", state, detail)
 
+def c_mtf_trend(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-def c_mtf_trend(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
     votes: List[float] = []
     parts: List[str] = []
 
     for tf, snap in mtf.items():
-        e20, e50 = _f(snap, "ema20"), _f(snap, "ema50")
 
-        if e20 is None or e50 is None:
+        ema20 = _f(snap, "ema20")
+        ema50 = _f(snap, "ema50")
+
+        if ema20 is None or ema50 is None:
             continue
 
-        up = e20 > e50
+        up = ema20 > ema50
+
         votes.append(1.0 if up else -1.0)
-        parts.append(f"{tf} {'UP' if up else 'DOWN'}")
+        parts.append(
+            f"{tf} {'UP' if up else 'DOWN'}"
+        )
 
     if not votes:
         return _vote(
@@ -119,6 +198,7 @@ def c_mtf_trend(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
         )
 
     bias = sum(votes) / len(votes)
+
     agree = abs(bias) == 1.0
 
     return _vote(
@@ -127,15 +207,20 @@ def c_mtf_trend(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
         "Multi-Timeframe Trend",
         " · ".join(parts),
         (
-            ("All timeframes agree" if agree else "Timeframes disagree")
-            + f" ({' , '.join(parts)}) — higher-timeframe context "
-            f"{'supports' if agree else 'dilutes'} the setup."
+            "All timeframes agree."
+            if agree
+            else "Timeframes are partially conflicting."
         ),
     )
 
 
-def c_macd(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    hist, prev = _f(s, "macd_hist"), _f(s, "macd_hist_prev")
+def c_macd(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
+
+    hist = _f(s, "macd_hist")
+    prev = _f(s, "macd_hist_prev")
 
     if hist is None:
         return _vote(
@@ -143,232 +228,350 @@ def c_macd(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
             11,
             "MACD",
             "n/a",
-            "MACD needs more candles",
+            "MACD unavailable",
         )
 
-    bias = 0.6 if hist > 0 else -0.6
-    rising = prev is not None and hist > prev
+    rising = (
+        prev is not None
+        and hist > prev
+    )
+
+    falling = (
+        prev is not None
+        and hist < prev
+    )
 
     if hist > 0 and rising:
         bias = 1.0
-    elif hist < 0 and prev is not None and hist < prev:
+    elif hist < 0 and falling:
         bias = -1.0
+    elif hist > 0:
+        bias = 0.6
+    elif hist < 0:
+        bias = -0.6
+    else:
+        bias = 0.0
 
     return _vote(
         bias,
         11,
         "MACD",
         f"hist {hist:+.3f}",
-        f"MACD histogram is {'positive' if hist > 0 else 'negative'} and "
-        f"{'expanding' if (rising and hist > 0) or (not rising and hist < 0) else 'contracting'} — "
-        f"momentum {'favours buyers' if hist > 0 else 'favours sellers'}.",
+        (
+            f"MACD histogram is "
+            f"{'positive' if hist > 0 else 'negative'}."
+        ),
     )
 
 
-def c_rsi(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    r = _f(s, "rsi")
+def c_rsi(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    if r is None:
+    rsi = _f(s, "rsi")
+
+    if rsi is None:
         return _vote(
             0,
             10,
             "RSI Momentum",
             "n/a",
-            "RSI needs more candles",
+            "RSI unavailable",
         )
 
-    if r >= 70:
-        bias, note = -0.4, "overbought — chasing longs here is poor risk"
-    elif r >= 55:
-        bias, note = 0.9, "healthy bullish momentum without being overbought"
-    elif r > 45:
-        bias, note = 0.0, "neutral momentum, no edge"
-    elif r > 30:
-        bias, note = -0.9, "bearish momentum with room to fall"
+    if rsi >= 70:
+        bias = -0.4
+        note = "overbought"
+
+    elif rsi >= 55:
+        bias = 0.9
+        note = "bullish momentum"
+
+    elif rsi > 45:
+        bias = 0.0
+        note = "neutral"
+
+    elif rsi > 30:
+        bias = -0.9
+        note = "bearish momentum"
+
     else:
-        bias, note = 0.4, "oversold — shorting here is poor risk"
+        bias = 0.4
+        note = "oversold"
 
     return _vote(
         bias,
         10,
         "RSI Momentum",
-        f"RSI {r:.1f}",
-        f"RSI at {r:.1f}: {note}.",
+        f"RSI {rsi:.1f}",
+        f"RSI {rsi:.1f}: {note}.",
     )
 
 
-def c_adx(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    a, pdi, mdi = _f(s, "adx"), _f(s, "plus_di"), _f(s, "minus_di")
+def c_adx(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    if a is None or pdi is None or mdi is None:
+    adx = _f(s, "adx")
+    plus_di = _f(s, "plus_di")
+    minus_di = _f(s, "minus_di")
+
+    if adx is None or plus_di is None or minus_di is None:
         return _vote(
             0,
             10,
             "ADX Trend Strength",
             "n/a",
-            "ADX needs more candles",
+            "ADX unavailable",
         )
 
-    strength = min(1.0, max(0.0, (a - 15) / 20))
-    bias = strength * (1.0 if pdi > mdi else -1.0)
+    strength = min(
+        1.0,
+        max(0.0, (adx - 15.0) / 20.0),
+    )
+
+    bias = (
+        strength
+        if plus_di > minus_di
+        else -strength
+    )
 
     return _vote(
         bias,
         10,
         "ADX Trend Strength",
-        f"ADX {a:.1f} · +DI {pdi:.1f} / -DI {mdi:.1f}",
-        f"ADX {a:.1f} means "
-        f"{'a trending' if a >= MIN_ADX else 'a weak/ranging'} market, and "
-        f"{'+DI dominates (buyers)' if pdi > mdi else '-DI dominates (sellers)'}.",
+        f"ADX {adx:.1f}",
+        (
+            f"ADX {adx:.1f}; "
+            f"{'+DI buyers dominate' if plus_di > minus_di else '-DI sellers dominate'}."
+        ),
     )
 
 
-def c_structure(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    st = s.get("structure") or {}
+def c_structure(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    bias = float(st.get("bias", 0.0)) if isinstance(st, dict) else 0.0
-    label = str(st.get("label", "UNCLEAR")) if isinstance(st, dict) else "UNCLEAR"
-    detail = str(st.get("detail", "")) if isinstance(st, dict) else ""
+    structure = s.get("structure") or {}
+
+    if not isinstance(structure, dict):
+        return _vote(
+            0,
+            11,
+            "Market Structure",
+            "UNCLEAR",
+            "structure unavailable",
+        )
+
+    bias = float(
+        structure.get("bias", 0.0)
+    )
+
+    label = str(
+        structure.get("label", "UNCLEAR")
+    )
+
+    detail = str(
+        structure.get("detail", "")
+    )
 
     return _vote(
         bias,
         11,
         "Market Structure",
         label,
-        f"Swing structure reads {label} — {detail}.",
+        f"{label} — {detail}.",
     )
 
 
-def c_vwap(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    p, v = _f(s, "price"), _f(s, "vwap")
+def c_vwap(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    if p is None or v is None:
+    price = _f(s, "price")
+    vwap = _f(s, "vwap")
+
+    if price is None or vwap is None:
         return _vote(
             0,
             8,
             "VWAP Bias",
             "n/a",
-            "VWAP unavailable (no volume data)",
+            "VWAP unavailable",
         )
 
-    dist_pct = (p - v) / v * 100
-    bias = max(-1.0, min(1.0, dist_pct / 0.25))
+    distance = (
+        (price - vwap)
+        / vwap
+        * 100
+    )
+
+    bias = max(
+        -1.0,
+        min(1.0, distance / 0.25),
+    )
 
     return _vote(
         bias,
         8,
         "VWAP Bias",
-        f"{dist_pct:+.2f}% vs VWAP {v:.2f}",
-        f"Price is {abs(dist_pct):.2f}% "
-        f"{'above' if dist_pct > 0 else 'below'} rolling VWAP — "
-        f"volume-weighted control is with "
-        f"{'buyers' if dist_pct > 0 else 'sellers'}.",
+        f"{distance:+.2f}%",
+        (
+            f"Price is {abs(distance):.2f}% "
+            f"{'above' if distance > 0 else 'below'} VWAP."
+        ),
     )
 
 
-def c_bollinger(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    pb, width = _f(s, "percent_b"), _f(s, "bb_width_pct")
+def c_bollinger(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    if pb is None:
+    percent_b = _f(s, "percent_b")
+
+    if percent_b is None:
         return _vote(
             0,
             8,
             "Bollinger Bands",
             "n/a",
-            "Bollinger needs more candles",
+            "Bollinger unavailable",
         )
 
-    if pb > 1.0:
-        bias, note = -0.5, "closed outside the upper band — stretched, mean reversion risk"
-    elif pb > 0.6:
-        bias, note = 0.8, "riding the upper half, buyers in control"
-    elif pb < 0.0:
-        bias, note = 0.5, "closed outside the lower band — stretched, bounce risk for shorts"
-    elif pb < 0.4:
-        bias, note = -0.8, "pinned to the lower half, sellers in control"
-    else:
-        bias, note = 0.0, "sitting mid-band, no directional edge"
+    if percent_b > 1.0:
+        bias = -0.5
 
-    state = f"%B {pb:.2f}" + (
-        f" · width {width:.2f}%" if width is not None else ""
-    )
+    elif percent_b > 0.6:
+        bias = 0.8
+
+    elif percent_b < 0.0:
+        bias = 0.5
+
+    elif percent_b < 0.4:
+        bias = -0.8
+
+    else:
+        bias = 0.0
 
     return _vote(
         bias,
         8,
         "Bollinger Bands",
-        state,
-        f"Bollinger {note}.",
+        f"%B {percent_b:.2f}",
+        f"Bollinger position {percent_b:.2f}.",
     )
 
 
-def c_volume(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    v, avg = _f(s, "volume"), _f(s, "volume_avg")
-    pat = s.get("pattern") or {}
+def c_volume(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    pat_bias = (
-        float(pat.get("bias", 0.0))
-        if isinstance(pat, dict)
-        else 0.0
+    volume = _f(s, "volume")
+    average = _f(s, "volume_avg")
+
+    pattern = s.get("pattern") or {}
+
+    if not isinstance(pattern, dict):
+        pattern = {}
+
+    pattern_bias = float(
+        pattern.get("bias", 0.0)
     )
 
-    if v is None or not avg:
+    if volume is None or not average:
         return _vote(
             0,
             6,
             "Volume Confirmation",
             "n/a",
-            "volume data unavailable",
+            "volume unavailable",
         )
 
-    ratio = v / avg
-    conviction = min(1.0, max(0.0, (ratio - 0.8) / 0.7))
+    ratio = volume / average
+
+    conviction = min(
+        1.0,
+        max(0.0, (ratio - 0.8) / 0.7),
+    )
+
     bias = conviction * (
-        1.0 if pat_bias > 0 else (-1.0 if pat_bias < 0 else 0.0)
+        1.0
+        if pattern_bias > 0
+        else (
+            -1.0
+            if pattern_bias < 0
+            else 0.0
+        )
     )
 
     return _vote(
         bias,
         6,
         "Volume Confirmation",
-        f"{ratio:.2f}x 20-bar average",
-        f"Current bar traded {ratio:.2f}x its 20-bar average volume — "
-        f"{'participation confirms the move' if ratio >= 1.0 else 'thin participation, weak conviction'}.",
+        f"{ratio:.2f}x",
+        f"Volume is {ratio:.2f}x the 20-bar average.",
     )
 
 
-def c_price_action(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    pat = s.get("pattern") or {}
+def c_price_action(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    bias = float(pat.get("bias", 0.0)) if isinstance(pat, dict) else 0.0
-    label = str(pat.get("label", "NONE")) if isinstance(pat, dict) else "NONE"
-    detail = str(pat.get("detail", "")) if isinstance(pat, dict) else ""
+    pattern = s.get("pattern") or {}
+
+    if not isinstance(pattern, dict):
+        pattern = {}
+
+    bias = float(
+        pattern.get("bias", 0.0)
+    )
+
+    label = str(
+        pattern.get("label", "NONE")
+    )
+
+    detail = str(
+        pattern.get("detail", "")
+    )
 
     return _vote(
         bias,
         8,
         "Price Action",
         label,
-        f"Last candle: {label} — {detail}.",
+        f"{label} — {detail}.",
     )
 
 
-def c_levels(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    p, a = _f(s, "price"), _f(s, "atr")
+def c_levels(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
+
+    price = _f(s, "price")
+    atr = _f(s, "atr")
+
     levels = s.get("levels") or {}
 
-    sup = (
-        list(levels.get("support", []))[:1]
-        if isinstance(levels, dict)
-        else []
-    )
-    res = (
-        list(levels.get("resistance", []))[:1]
-        if isinstance(levels, dict)
-        else []
+    if not isinstance(levels, dict):
+        levels = {}
+
+    support = list(
+        levels.get("support", [])
     )
 
-    if p is None or a is None or not a:
+    resistance = list(
+        levels.get("resistance", [])
+    )
+
+    if price is None or atr is None or atr <= 0:
         return _vote(
             0,
             10,
@@ -377,77 +580,143 @@ def c_levels(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
             "levels unavailable",
         )
 
-    d_sup = (p - sup[0]) / a if sup else None
-    d_res = (res[0] - p) / a if res else None
+    support = [
+        float(x)
+        for x in support
+        if isinstance(x, (int, float))
+    ]
+
+    resistance = [
+        float(x)
+        for x in resistance
+        if isinstance(x, (int, float))
+    ]
+
+    nearest_support = (
+        max(
+            [x for x in support if x < price],
+            default=None,
+        )
+    )
+
+    nearest_resistance = (
+        min(
+            [x for x in resistance if x > price],
+            default=None,
+        )
+    )
 
     bias = 0.0
-    notes: List[str] = []
 
-    if d_res is not None and d_res < 0.6:
-        bias -= 0.8
-        notes.append(
-            f"resistance {res[0]:.2f} only {d_res:.2f} ATR overhead (caps upside)"
+    if nearest_resistance is not None:
+        distance = (
+            nearest_resistance - price
+        ) / atr
+
+        if distance < 0.6:
+            bias -= 0.8
+
+    if nearest_support is not None:
+        distance = (
+            price - nearest_support
+        ) / atr
+
+        if distance < 0.6:
+            bias += 0.8
+
+    if (
+        bias == 0.0
+        and nearest_support is not None
+        and nearest_resistance is not None
+    ):
+        support_distance = (
+            price - nearest_support
         )
 
-    if d_sup is not None and d_sup < 0.6:
-        bias += 0.8
-        notes.append(
-            f"support {sup[0]:.2f} only {d_sup:.2f} ATR below (cushions downside)"
+        resistance_distance = (
+            nearest_resistance - price
         )
 
-    if not notes:
-        if d_res is not None and d_sup is not None:
-            bias = 0.4 if d_res > d_sup else -0.4
-
-        notes.append(
-            f"clear runway: {d_sup:.2f} ATR to support, {d_res:.2f} ATR to resistance"
-            if d_sup is not None and d_res is not None
-            else "no nearby level pressure"
+        bias = (
+            0.4
+            if resistance_distance > support_distance
+            else -0.4
         )
-
-    state = (
-        f"S {sup[0]:.2f}" if sup else "S —"
-    ) + " / " + (
-        f"R {res[0]:.2f}" if res else "R —"
-    )
 
     return _vote(
         bias,
         10,
         "Support / Resistance",
-        state,
-        "; ".join(notes).capitalize() + ".",
+        (
+            f"S {nearest_support:.2f}"
+            if nearest_support is not None
+            else "S —"
+        )
+        + " / "
+        + (
+            f"R {nearest_resistance:.2f}"
+            if nearest_resistance is not None
+            else "R —"
+        ),
+        "Nearby liquidity levels evaluated.",
     )
 
 
-def c_breakout(s: Snapshot, mtf: Dict[str, Snapshot]) -> Dict[str, object]:
-    """Breakout quality / fake-breakout / chop read of the recent range."""
+def c_breakout(
+    s: Snapshot,
+    mtf: Dict[str, Snapshot],
+) -> Dict[str, object]:
 
-    brk = s.get("breakout") or {}
+    breakout = s.get("breakout") or {}
 
-    if not isinstance(brk, dict) or brk.get("label") == "NO DATA":
+    if not isinstance(breakout, dict):
         return _vote(
             0,
             10,
             "Breakout Quality",
             "n/a",
-            "not enough candles for a breakout read",
+            "breakout unavailable",
         )
 
-    bias = float(brk.get("bias", 0.0))
-    label = str(brk.get("label", ""))
+    label = str(
+        breakout.get("label", "")
+    )
+
+    if label == "NO DATA":
+        return _vote(
+            0,
+            10,
+            "Breakout Quality",
+            "n/a",
+            "not enough candles",
+        )
+
+    bias = float(
+        breakout.get("bias", 0.0)
+    )
+
+    detail = str(
+        breakout.get("detail", "")
+    )
 
     return _vote(
         bias,
         10,
         "Breakout Quality",
         label,
-        str(brk.get("detail", "")).capitalize() + ".",
+        detail,
     )
 
 
+# =====================================================================
+# CONFIRMATION LIST
+# =====================================================================
+
 CONFIRMATIONS: List[
-    Callable[[Snapshot, Dict[str, Snapshot]], Dict[str, object]]
+    Callable[
+        [Snapshot, Dict[str, Snapshot]],
+        Dict[str, object],
+    ]
 ] = [
     c_ema_trend,
     c_mtf_trend,
@@ -463,260 +732,484 @@ CONFIRMATIONS: List[
     c_breakout,
 ]
 
-TOTAL_WEIGHT = 120.0
+
+TOTAL_WEIGHT = sum(
+    float(
+        {
+            "c_ema_trend": 14,
+            "c_mtf_trend": 14,
+            "c_macd": 11,
+            "c_rsi": 10,
+            "c_adx": 10,
+            "c_structure": 11,
+            "c_levels": 10,
+            "c_vwap": 8,
+            "c_bollinger": 8,
+            "c_volume": 6,
+            "c_price_action": 8,
+            "c_breakout": 10,
+        }.get(fn.__name__, 0)
+    )
+    for fn in CONFIRMATIONS
+)
 
 
-# --------------------------------------------------------------- SL/TP design
+# =====================================================================
+# INITIAL SL / TP
+# =====================================================================
+
 def plan_levels(
     direction: str,
     entry: float,
     snap: Snapshot,
     cfg: Optional[Dict[str, float]] = None,
-) -> Tuple[Optional[float], Optional[float], List[str], float]:
-    """Volatility + structure aware SL/TP.
-
-    Returns:
-        (sl_dist, tp_dist, reasons, rr)
-
-    sl_dist and tp_dist are PRICE DISTANCES, not absolute prices.
-    The MT5 bridge converts these distances into actual SL/TP using
-    the live broker price at execution time.
-    """
+) -> Tuple[
+    Optional[float],
+    Optional[float],
+    List[str],
+    float,
+]:
 
     cfg = cfg or {}
 
-    sl_mult = float(cfg.get("atr_sl_mult", ATR_SL_MULT))
-    base_rr = float(cfg.get("base_rr", BASE_RR))
-    min_rr = float(cfg.get("min_rr", MIN_RR))
+    atr_sl_mult = float(
+        cfg.get(
+            "atr_sl_mult",
+            ATR_SL_MULT,
+        )
+    )
 
-    a = _f(snap, "atr")
+    base_rr = float(
+        cfg.get(
+            "base_rr",
+            BASE_RR,
+        )
+    )
 
-    if a is None or a <= 0:
+    min_rr = float(
+        cfg.get(
+            "min_rr",
+            MIN_RR,
+        )
+    )
+
+    atr = _f(snap, "atr")
+
+    if atr is None or atr <= 0:
         return (
             None,
             None,
-            ["ATR unavailable — cannot size risk safely"],
+            ["ATR unavailable"],
             0.0,
         )
 
     levels = snap.get("levels") or {}
 
-    sup = (
-        list(levels.get("support", []))
-        if isinstance(levels, dict)
-        else []
-    )
-    res = (
-        list(levels.get("resistance", []))
-        if isinstance(levels, dict)
-        else []
-    )
+    if not isinstance(levels, dict):
+        levels = {}
 
-    adx_val = _f(snap, "adx") or 20.0
+    support = [
+        float(x)
+        for x in levels.get("support", [])
+        if isinstance(x, (int, float))
+    ]
+
+    resistance = [
+        float(x)
+        for x in levels.get("resistance", [])
+        if isinstance(x, (int, float))
+    ]
+
     reasons: List[str] = []
 
-    # --------------------------------------------------------- stop distance
-    vol_stop = sl_mult * a
-    max_stop = max(vol_stop, 2.0 * a)
+    # -------------------------------------------------------------
+    # ATR STOP
+    # -------------------------------------------------------------
+
+    volatility_stop = atr * atr_sl_mult
+
+    # Do not make the stop excessively tight.
+    minimum_stop = atr * 1.0
+
+    sl_dist = max(
+        volatility_stop,
+        minimum_stop,
+    )
+
+    # -------------------------------------------------------------
+    # STRUCTURE STOP
+    # -------------------------------------------------------------
 
     if direction == "BUY":
-        struct_stop = (
-            entry - (sup[0] - 0.2 * a)
-            if sup
-            else vol_stop
-        )
 
-        sl_dist = max(
-            vol_stop,
-            min(struct_stop, max_stop),
-        )
+        supports = [
+            x
+            for x in support
+            if x < entry
+        ]
 
-        # Internal absolute price used only for planning/reason calculation.
-        sl = entry - sl_dist
+        if supports:
+            nearest_support = max(supports)
 
-        reasons.append(
-            f"Stop placed {sl_dist:.2f} below entry = "
-            f"max({sl_mult}x ATR {a:.2f}"
-            + (
-                f", 0.2 ATR under support {sup[0]:.2f}"
-                if sup
-                else ""
+            structure_distance = (
+                entry
+                - (
+                    nearest_support
+                    - 0.20 * atr
+                )
             )
-            + ") — tight enough for a scalp, wide enough that ordinary "
-            "noise cannot hit it."
-        )
+
+            # Structure can widen the stop, but never
+            # beyond 2 ATR.
+            sl_dist = max(
+                sl_dist,
+                min(
+                    structure_distance,
+                    2.0 * atr,
+                ),
+            )
+
+    elif direction == "SELL":
+
+        resistances = [
+            x
+            for x in resistance
+            if x > entry
+        ]
+
+        if resistances:
+            nearest_resistance = min(
+                resistances
+            )
+
+            structure_distance = (
+                (
+                    nearest_resistance
+                    + 0.20 * atr
+                )
+                - entry
+            )
+
+            sl_dist = max(
+                sl_dist,
+                min(
+                    structure_distance,
+                    2.0 * atr,
+                ),
+            )
 
     else:
-        struct_stop = (
-            (res[0] + 0.2 * a) - entry
-            if res
-            else vol_stop
+        return (
+            None,
+            None,
+            ["Invalid direction"],
+            0.0,
         )
 
-        sl_dist = max(
-            vol_stop,
-            min(struct_stop, max_stop),
-        )
+    # -------------------------------------------------------------
+    # DYNAMIC RR
+    # -------------------------------------------------------------
 
-        # Internal absolute price used only for planning/reason calculation.
-        sl = entry + sl_dist
+    adx = _f(snap, "adx") or 20.0
 
-        reasons.append(
-            f"Stop placed {sl_dist:.2f} above entry = "
-            f"max({sl_mult}x ATR {a:.2f}"
-            + (
-                f", 0.2 ATR over resistance {res[0]:.2f}"
-                if res
-                else ""
-            )
-            + ") — tight enough for a scalp, wide enough that ordinary "
-            "noise cannot hit it."
-        )
-
-    # --------------------------------------------------------------- RR
     rr = base_rr + min(
-        0.5,
-        max(0.0, (adx_val - 20) / 50),
+        0.6,
+        max(
+            0.0,
+            (adx - 20.0) / 50.0,
+        ),
+    )
+
+    rr = max(
+        rr,
+        min_rr,
+    )
+
+    tp_dist = sl_dist * rr
+
+    # -------------------------------------------------------------
+    # RESISTANCE / SUPPORT TP CAP
+    # -------------------------------------------------------------
+
+    if direction == "BUY":
+
+        blockers = sorted(
+            x
+            for x in resistance
+            if x > entry
+        )
+
+        if blockers:
+
+            first = blockers[0]
+
+            candidate = (
+                first
+                - 0.15 * atr
+            )
+
+            minimum_tp = (
+                sl_dist * min_rr
+            )
+
+            if candidate > entry + minimum_tp:
+                tp_dist = candidate - entry
+
+    else:
+
+        blockers = sorted(
+            (
+                x
+                for x in support
+                if x < entry
+            ),
+            reverse=True,
+        )
+
+        if blockers:
+
+            first = blockers[0]
+
+            candidate = (
+                first
+                + 0.15 * atr
+            )
+
+            minimum_tp = (
+                sl_dist * min_rr
+            )
+
+            if candidate < entry - minimum_tp:
+                tp_dist = entry - candidate
+
+    final_rr = (
+        tp_dist / sl_dist
+        if sl_dist > 0
+        else 0.0
     )
 
     reasons.append(
-        f"Target reward:risk set to {rr:.2f} because ADX is {adx_val:.1f} "
-        f"({'strong push, give it a little more room' if adx_val >= 25 else 'moderate push, take the quick win'})."
+        f"Initial SL distance {sl_dist:.2f} "
+        f"({sl_dist / atr:.2f} ATR)."
     )
-
-    # ---------------------------------------------------------- target price
-    if direction == "BUY":
-        tp = entry + sl_dist * rr
-
-        blockers = [lv for lv in res if lv > entry]
-
-        if blockers and blockers[0] < tp:
-            capped = blockers[0] - 0.15 * a
-
-            if capped > entry + sl_dist * min_rr:
-                tp = capped
-
-                reasons.append(
-                    f"Target pulled back to {tp:.2f}, just under resistance "
-                    f"{blockers[0]:.2f}, so we bank profit before the level "
-                    "rejects price."
-                )
-
-    else:
-        tp = entry - sl_dist * rr
-
-        blockers = [lv for lv in sup if lv < entry]
-
-        if blockers and blockers[0] > tp:
-            capped = blockers[0] + 0.15 * a
-
-            if capped < entry - sl_dist * min_rr:
-                tp = capped
-
-                reasons.append(
-                    f"Target pulled up to {tp:.2f}, just above support "
-                    f"{blockers[0]:.2f}, so we bank profit before the level "
-                    "bounces price."
-                )
-
-    # ----------------------------------------------------------- final RR
-    final_rr = abs(tp - entry) / sl_dist if sl_dist else 0.0
-
-    struct = (
-        snap.get("structure")
-        if isinstance(snap.get("structure"), dict)
-        else {}
-    )
-
-    brk = (
-        snap.get("breakout")
-        if isinstance(snap.get("breakout"), dict)
-        else {}
-    )
-
-    e21 = _f(snap, "ema21") or _f(snap, "ema20")
-    vw = _f(snap, "vwap")
-
-    if direction == "BUY":
-        reasons.append(
-            "Setup is invalidated if price closes back below "
-            + (f"EMA21 {e21:.2f}" if e21 else "the fast EMA")
-            + (f" or loses VWAP {vw:.2f}" if vw else "")
-            + f", or if structure flips from "
-            f"{struct.get('label', 'its current read')} "
-            "to lower highs and lower lows."
-        )
-
-    else:
-        reasons.append(
-            "Setup is invalidated if price closes back above "
-            + (f"EMA21 {e21:.2f}" if e21 else "the fast EMA")
-            + (f" or reclaims VWAP {vw:.2f}" if vw else "")
-            + f", or if structure flips from "
-            f"{struct.get('label', 'its current read')} "
-            "to higher highs and higher lows."
-        )
 
     reasons.append(
-        f"Main risk: gold can move {a:.2f} (1 ATR) either way on news or "
-        f"a liquidity grab; the current range read is "
-        f"{brk.get('label', 'unclassified')}, so a sudden reversal would "
-        "hit the stop before the target. Risk is capped at the configured "
-        "% of balance — paper trading only, no signal is a guarantee."
+        f"Initial TP distance {tp_dist:.2f} "
+        f"with R:R {final_rr:.2f}."
     )
 
-    # ------------------------------------------------------- DISTANCE OUTPUT
-    #
-    # IMPORTANT:
-    # Do NOT return absolute SL/TP prices.
-    # Return only distances from the planned entry.
-    #
-    # MT5 EA will calculate:
-    #
-    # BUY:
-    #   SL = live_price - sl_dist
-    #   TP = live_price + tp_dist
-    #
-    # SELL:
-    #   SL = live_price + sl_dist
-    #   TP = live_price - tp_dist
-    #
-    tp_dist = abs(tp - entry)
-    sl_dist = abs(sl - entry)
-
-    return sl_dist, tp_dist, reasons, final_rr
+    return (
+        abs(sl_dist),
+        abs(tp_dist),
+        reasons,
+        final_rr,
+    )
 
 
-# ------------------------------------------------------------------- analysis
+# =====================================================================
+# TRAILING STOP CALCULATION
+# =====================================================================
+
+def calculate_trailing_sl(
+    direction: str,
+    entry: float,
+    current_price: float,
+    current_sl: Optional[float],
+    initial_sl_dist: float,
+    atr: float,
+    cfg: Optional[Dict[str, float]] = None,
+) -> Optional[float]:
+
+    """Calculate a one-way trailing stop.
+
+    BUY:
+        SL can ONLY move upward.
+
+    SELL:
+        SL can ONLY move downward.
+
+    The function never returns a worse SL than the existing SL.
+    """
+
+    if not TRAILING_ENABLED:
+        return current_sl
+
+    if atr <= 0 or initial_sl_dist <= 0:
+        return current_sl
+
+    cfg = cfg or {}
+
+    start_r = float(
+        cfg.get(
+            "trail_start_r",
+            TRAIL_START_R,
+        )
+    )
+
+    trail_atr_mult = float(
+        cfg.get(
+            "trail_atr_mult",
+            TRAIL_ATR_MULT,
+        )
+    )
+
+    profit_lock_r = float(
+        cfg.get(
+            "profit_lock_r",
+            PROFIT_LOCK_R,
+        )
+    )
+
+    if direction == "BUY":
+
+        profit = current_price - entry
+
+        if profit <= 0:
+            return current_sl
+
+        r_multiple = (
+            profit / initial_sl_dist
+        )
+
+        if r_multiple < start_r:
+            return current_sl
+
+        # Once 1R is reached:
+        # lock at least a small amount of profit.
+        breakeven_sl = (
+            entry
+            + initial_sl_dist
+            * profit_lock_r
+        )
+
+        # Normal trailing distance.
+        trail_distance = (
+            atr * trail_atr_mult
+        )
+
+        trailing_sl = (
+            current_price
+            - trail_distance
+        )
+
+        new_sl = max(
+            breakeven_sl,
+            trailing_sl,
+        )
+
+        # NEVER move SL backwards.
+        if current_sl is not None:
+            new_sl = max(
+                current_sl,
+                new_sl,
+            )
+
+        return new_sl
+
+    if direction == "SELL":
+
+        profit = entry - current_price
+
+        if profit <= 0:
+            return current_sl
+
+        r_multiple = (
+            profit / initial_sl_dist
+        )
+
+        if r_multiple < start_r:
+            return current_sl
+
+        breakeven_sl = (
+            entry
+            - initial_sl_dist
+            * profit_lock_r
+        )
+
+        trail_distance = (
+            atr * trail_atr_mult
+        )
+
+        trailing_sl = (
+            current_price
+            + trail_distance
+        )
+
+        new_sl = min(
+            breakeven_sl,
+            trailing_sl,
+        )
+
+        # NEVER move SL backwards.
+        if current_sl is not None:
+            new_sl = min(
+                current_sl,
+                new_sl,
+            )
+
+        return new_sl
+
+    return current_sl
+
+
+# =====================================================================
+# FULL ANALYSIS
+# =====================================================================
+
 def analyze(
     timeframe: str,
-    candles_by_tf: Dict[str, List[Dict[str, float]]],
+    candles_by_tf: Dict[
+        str,
+        List[Dict[str, float]],
+    ],
     price: float,
     cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
-    """Run the full confluence engine for one primary timeframe."""
 
     cfg = cfg or {}
 
     threshold = float(
-        cfg.get("confidence_threshold", CONFIDENCE_THRESHOLD)
-    )
-    min_adx = float(
-        cfg.get("min_adx", MIN_ADX)
-    )
-    min_rr = float(
-        cfg.get("min_rr", MIN_RR)
-    )
-    min_atr_pct = float(
-        cfg.get("min_atr_pct", MIN_ATR_PCT)
-    )
-    max_atr_pct = float(
-        cfg.get("max_atr_pct", MAX_ATR_PCT)
+        cfg.get(
+            "confidence_threshold",
+            CONFIDENCE_THRESHOLD,
+        )
     )
 
-    primary = candles_by_tf.get(timeframe, [])
+    min_adx = float(
+        cfg.get(
+            "min_adx",
+            MIN_ADX,
+        )
+    )
+
+    min_rr = float(
+        cfg.get(
+            "min_rr",
+            MIN_RR,
+        )
+    )
+
+    min_atr_pct = float(
+        cfg.get(
+            "min_atr_pct",
+            MIN_ATR_PCT,
+        )
+    )
+
+    max_atr_pct = float(
+        cfg.get(
+            "max_atr_pct",
+            MAX_ATR_PCT,
+        )
+    )
+
+    primary = candles_by_tf.get(
+        timeframe,
+        [],
+    )
 
     if len(primary) < 60:
+
         return {
             "timeframe": timeframe,
             "direction": "WAIT",
@@ -731,7 +1224,7 @@ def analyze(
                 }
             ],
             "tradeable": False,
-            "summary": "Waiting for enough market history to evaluate.",
+            "summary": "Waiting for enough market history.",
             "sl_dist": None,
             "tp_dist": None,
             "rr": 0.0,
@@ -740,34 +1233,59 @@ def analyze(
             "last_closed": None,
         }
 
-    snap = indicators.snapshot(primary)
+    snap = indicators.snapshot(
+        primary
+    )
 
-    mtf_snaps: Dict[str, Snapshot] = {}
+    mtf_snaps: Dict[
+        str,
+        Snapshot,
+    ] = {}
 
     for tf in dict.fromkeys(
-        MTF_MAP.get(timeframe, [timeframe])
+        MTF_MAP.get(
+            timeframe,
+            [timeframe],
+        )
     ):
-        cs = candles_by_tf.get(tf)
 
-        if cs and len(cs) >= 60:
+        candles = candles_by_tf.get(
+            tf
+        )
+
+        if candles and len(candles) >= 60:
+
             mtf_snaps[tf] = (
                 snap
                 if tf == timeframe
-                else indicators.snapshot(cs)
+                else indicators.snapshot(
+                    candles
+                )
             )
 
     confirmations = [
-        fn(snap, mtf_snaps)
+        fn(
+            snap,
+            mtf_snaps,
+        )
         for fn in CONFIRMATIONS
     ]
 
     bull = sum(
-        float(c["weight"]) * max(float(c["vote"]), 0.0)
+        float(c["weight"])
+        * max(
+            float(c["vote"]),
+            0.0,
+        )
         for c in confirmations
     )
 
     bear = sum(
-        float(c["weight"]) * max(-float(c["vote"]), 0.0)
+        float(c["weight"])
+        * max(
+            -float(c["vote"]),
+            0.0,
+        )
         for c in confirmations
     )
 
@@ -776,13 +1294,19 @@ def analyze(
     direction = (
         "BUY"
         if net > 0
-        else ("SELL" if net < 0 else "WAIT")
+        else (
+            "SELL"
+            if net < 0
+            else "WAIT"
+        )
     )
 
     confidence = round(
         min(
             97.0,
-            abs(net) / TOTAL_WEIGHT * 132.0,
+            abs(net)
+            / TOTAL_WEIGHT
+            * 132.0,
         ),
         1,
     )
@@ -790,12 +1314,19 @@ def analyze(
     if confidence < 15:
         direction = "WAIT"
 
-    a = _f(snap, "atr")
-    adx_val = _f(snap, "adx")
+    atr = _f(
+        snap,
+        "atr",
+    )
+
+    adx = _f(
+        snap,
+        "adx",
+    )
 
     atr_pct = (
-        (a / price * 100)
-        if a and price
+        atr / price * 100
+        if atr and price
         else None
     )
 
@@ -810,124 +1341,183 @@ def analyze(
         )
     )
 
-    # ----------------------------------------------------------- SL/TP
-    sl_dist, tp_dist, level_reasons, rr = (
-        None,
-        None,
-        [],
-        0.0,
-    )
+    # -------------------------------------------------------------
+    # INITIAL SL / TP
+    # -------------------------------------------------------------
 
-    if direction in ("BUY", "SELL"):
-        sl_dist, tp_dist, level_reasons, rr = plan_levels(
+    sl_dist = None
+    tp_dist = None
+    level_reasons: List[str] = []
+    rr = 0.0
+
+    if direction in (
+        "BUY",
+        "SELL",
+    ):
+
+        (
+            sl_dist,
+            tp_dist,
+            level_reasons,
+            rr,
+        ) = plan_levels(
             direction,
             price,
             snap,
             cfg,
         )
 
-    last_closed = (
-        primary[-2]["close"]
-        if len(primary) >= 2
-        else primary[-1]["close"]
+    # -------------------------------------------------------------
+    # BREAKOUT / CHOP
+    # -------------------------------------------------------------
+
+    breakout = snap.get(
+        "breakout"
+    ) or {}
+
+    if not isinstance(
+        breakout,
+        dict,
+    ):
+        breakout = {}
+
+    breakout_label = str(
+        breakout.get(
+            "label",
+            "",
+        )
     )
 
-    # ---- extra scalping gates
-    brk = (
-        snap.get("breakout")
-        if isinstance(snap.get("breakout"), dict)
-        else {}
+    chop = bool(
+        breakout.get(
+            "chop",
+            False,
+        )
     )
 
-    brk_label = (
-        str(brk.get("label", ""))
-        if isinstance(brk, dict)
-        else ""
+    fake = bool(
+        breakout.get(
+            "fake",
+            False,
+        )
     )
 
-    chop = (
-        bool(brk.get("chop"))
-        if isinstance(brk, dict)
-        else False
+    efficiency = float(
+        breakout.get(
+            "efficiency",
+            0.0,
+        )
+        or 0.0
     )
 
-    fake = (
-        bool(brk.get("fake"))
-        if isinstance(brk, dict)
-        else False
-    )
-
-    efficiency = (
-        float(brk.get("efficiency") or 0.0)
-        if isinstance(brk, dict)
-        else 0.0
-    )
-
-    fake_bias = (
-        float(brk.get("bias") or 0.0)
-        if isinstance(brk, dict)
-        else 0.0
+    fake_bias = float(
+        breakout.get(
+            "bias",
+            0.0,
+        )
+        or 0.0
     )
 
     fake_against = (
-        (direction == "BUY" and fake_bias < 0)
-        or (direction == "SELL" and fake_bias > 0)
+        direction == "BUY"
+        and fake_bias < 0
+    ) or (
+        direction == "SELL"
+        and fake_bias > 0
     )
 
-    # higher timeframes must not strongly contradict entry timeframe
+    # -------------------------------------------------------------
+    # HIGHER TIMEFRAME OPPOSITION
+    # -------------------------------------------------------------
+
     higher = [
         tf
-        for tf in ("15m", "30m", "1h")
-        if tf in mtf_snaps and tf != timeframe
+        for tf in (
+            "15m",
+            "30m",
+            "1h",
+        )
+        if tf in mtf_snaps
+        and tf != timeframe
     ]
 
     opposed: List[str] = []
 
     for tf in higher:
-        sn = mtf_snaps[tf]
 
-        e_fast = (
-            _f(sn, "ema21")
-            or _f(sn, "ema20")
+        higher_snap = mtf_snaps[tf]
+
+        fast = (
+            _f(
+                higher_snap,
+                "ema21",
+            )
+            or _f(
+                higher_snap,
+                "ema20",
+            )
         )
 
-        e_slow = _f(sn, "ema50")
-        adx_tf = _f(sn, "adx") or 0.0
+        slow = _f(
+            higher_snap,
+            "ema50",
+        )
 
-        if e_fast is None or e_slow is None:
+        tf_adx = (
+            _f(
+                higher_snap,
+                "adx",
+            )
+            or 0.0
+        )
+
+        if fast is None or slow is None:
             continue
 
-        tf_up = e_fast > e_slow
-        strong = adx_tf >= 20
+        up = fast > slow
 
-        if strong and (
-            (direction == "BUY" and not tf_up)
-            or (direction == "SELL" and tf_up)
-        ):
-            opposed.append(
-                f"{tf} (ADX {adx_tf:.0f})"
-            )
+        if tf_adx >= 20:
+
+            if (
+                direction == "BUY"
+                and not up
+            ) or (
+                direction == "SELL"
+                and up
+            ):
+                opposed.append(
+                    f"{tf} ADX {tf_adx:.0f}"
+                )
 
     mtf_ok = (
-        direction not in ("BUY", "SELL")
+        direction
+        not in (
+            "BUY",
+            "SELL",
+        )
         or len(opposed) < 2
     )
 
-    mtf_detail = (
-        f"{len(opposed)} higher timeframe(s) strongly opposed: "
-        f"{', '.join(opposed)}"
-        if opposed
-        else
-        f"{len(higher)} higher timeframe(s) checked, "
-        "none strongly opposed"
+    # -------------------------------------------------------------
+    # EXTENSION
+    # -------------------------------------------------------------
+
+    ema21 = (
+        _f(
+            snap,
+            "ema21",
+        )
+        or _f(
+            snap,
+            "ema20",
+        )
     )
 
-    # over-extension
-    e21 = _f(snap, "ema21") or _f(snap, "ema20")
-
     stretch = (
-        abs(price - e21) / a
-        if (e21 and a)
+        abs(
+            price - ema21
+        ) / atr
+        if ema21 and atr
         else None
     )
 
@@ -936,226 +1526,391 @@ def analyze(
         and stretch > 2.2
     )
 
-    extension_detail = (
-        f"price is {stretch:.2f} ATR from EMA21 (cap 2.20 ATR)"
-        if stretch is not None
-        else "EMA21 distance unavailable"
+    # -------------------------------------------------------------
+    # VOLUME
+    # -------------------------------------------------------------
+
+    volume = _f(
+        snap,
+        "volume",
     )
 
-    vol_now = _f(snap, "volume")
-    vol_avg = _f(snap, "volume_avg")
+    volume_avg = _f(
+        snap,
+        "volume_avg",
+    )
 
-    vol_ratio = (
-        (vol_now / vol_avg)
-        if (vol_now and vol_avg)
+    volume_ratio = (
+        volume / volume_avg
+        if volume
+        and volume_avg
         else None
     )
 
-    vol_ok = (
-        vol_ratio is None
-        or vol_ratio >= 0.6
+    volume_ok = (
+        volume_ratio is None
+        or volume_ratio >= 0.6
     )
 
-    vol_detail = (
-        f"current bar traded {vol_ratio:.2f}x its 20-bar average "
-        "(need ≥ 0.60x)"
-        if vol_ratio is not None
-        else "volume data unavailable"
-    )
+    # -------------------------------------------------------------
+    # RISK CHECKS
+    # -------------------------------------------------------------
 
-    checks: List[Dict[str, object]] = [
+    checks: List[
+        Dict[str, object]
+    ] = [
+
         {
-            "name": f"Confidence ≥ {threshold:.0f}%",
-            "passed": confidence >= threshold,
-            "detail": (
-                f"confluence score {confidence:.1f}% "
-                f"({aligned}/{len(confirmations)} confirmations aligned)"
-            ),
+            "name":
+                f"Confidence ≥ {threshold:.0f}%",
+            "passed":
+                confidence >= threshold,
+            "detail":
+                f"{confidence:.1f}% confidence",
         },
+
         {
-            "name": f"Trend strength ADX ≥ {min_adx:.0f}",
-            "passed": bool(
-                adx_val
-                and adx_val >= min_adx
-            ),
-            "detail": (
-                f"ADX {adx_val:.1f}"
-                if adx_val
-                else "ADX unavailable"
-            ),
+            "name":
+                f"ADX ≥ {min_adx:.0f}",
+            "passed":
+                bool(
+                    adx
+                    and adx >= min_adx
+                ),
+            "detail":
+                (
+                    f"ADX {adx:.1f}"
+                    if adx
+                    else "ADX unavailable"
+                ),
         },
+
         {
-            "name": "Volatility in tradeable band",
-            "passed": bool(
-                atr_pct
-                and min_atr_pct <= atr_pct <= max_atr_pct
-            ),
-            "detail": (
-                f"ATR is {atr_pct:.3f}% of price "
-                f"(band {min_atr_pct}–{max_atr_pct}%)"
-                if atr_pct
-                else "ATR unavailable"
-            ),
+            "name":
+                "Volatility in tradeable band",
+            "passed":
+                bool(
+                    atr_pct
+                    and
+                    min_atr_pct
+                    <= atr_pct
+                    <= max_atr_pct
+                ),
+            "detail":
+                (
+                    f"ATR {atr_pct:.3f}%"
+                    if atr_pct
+                    else "ATR unavailable"
+                ),
         },
+
         {
-            "name": f"Reward:risk ≥ {min_rr}",
-            "passed": rr >= min_rr,
-            "detail": (
-                f"planned R:R {rr:.2f}"
-                if rr
-                else "no valid SL/TP plan"
-            ),
+            "name":
+                f"Reward:risk ≥ {min_rr}",
+            "passed":
+                rr >= min_rr,
+            "detail":
+                f"R:R {rr:.2f}",
         },
+
         {
-            "name": "Direction is not WAIT",
-            "passed": direction in ("BUY", "SELL"),
-            "detail": f"engine bias {direction}",
+            "name":
+                "Direction is not WAIT",
+            "passed":
+                direction in (
+                    "BUY",
+                    "SELL",
+                ),
+            "detail":
+                direction,
         },
+
         {
-            "name": "Market is not choppy",
-            "passed": not chop,
-            "detail": (
-                f"{brk_label} — directional efficiency "
-                f"{efficiency:.2f} (need ≥ 0.22 to scalp)"
-            ),
+            "name":
+                "Market is not choppy",
+            "passed":
+                not chop,
+            "detail":
+                breakout_label,
         },
+
         {
-            "name": "No failed/fake breakout against us",
-            "passed": not (fake and fake_against),
-            "detail": (
-                f"{brk_label}: a failed break points the other way"
-                if (fake and fake_against)
-                else (
-                    brk_label
-                    or "no failed break detected"
-                )
-            ),
+            "name":
+                "No failed breakout against us",
+            "passed":
+                not (
+                    fake
+                    and fake_against
+                ),
+            "detail":
+                breakout_label,
         },
+
         {
-            "name": "Higher timeframes not opposed",
-            "passed": mtf_ok,
-            "detail": mtf_detail,
+            "name":
+                "Higher timeframes aligned",
+            "passed":
+                mtf_ok,
+            "detail":
+                (
+                    "No strong opposition"
+                    if not opposed
+                    else ", ".join(opposed)
+                ),
         },
+
         {
-            "name": "Price not over-extended",
-            "passed": not extended,
-            "detail": extension_detail,
+            "name":
+                "Price not overextended",
+            "passed":
+                not extended,
+            "detail":
+                (
+                    f"{stretch:.2f} ATR from EMA21"
+                    if stretch is not None
+                    else "extension unavailable"
+                ),
         },
+
         {
-            "name": "Volume participation",
-            "passed": vol_ok,
-            "detail": vol_detail,
+            "name":
+                "Volume participation",
+            "passed":
+                volume_ok,
+            "detail":
+                (
+                    f"{volume_ratio:.2f}x average"
+                    if volume_ratio is not None
+                    else "volume unavailable"
+                ),
         },
     ]
 
     tradeable = all(
-        bool(c["passed"])
-        for c in checks
+        bool(
+            check["passed"]
+        )
+        for check in checks
     )
 
+    # -------------------------------------------------------------
+    # SUMMARY
+    # -------------------------------------------------------------
+
     if direction == "WAIT":
+
         summary = (
-            "No trade: confirmations are split, so the engine stays flat "
-            "rather than forcing a low-quality entry."
+            "No trade: directional confirmations "
+            "are not sufficiently aligned."
         )
 
     elif tradeable:
+
         summary = (
-            f"{direction} setup at {price:.2f} with "
-            f"{confidence:.1f}% confluence — "
-            f"{aligned}/{len(confirmations)} confirmations agree "
-            "and every risk gate passed."
+            f"{direction} setup at "
+            f"{price:.2f} with "
+            f"{confidence:.1f}% confidence. "
+            f"{aligned}/{len(confirmations)} "
+            "confirmations aligned."
         )
 
     else:
+
         failed = [
-            str(c["name"])
-            for c in checks
-            if not c["passed"]
+            str(
+                check["name"]
+            )
+            for check in checks
+            if not check["passed"]
         ]
 
         summary = (
-            f"Leaning {direction} at {confidence:.1f}% confidence, "
-            "but holding fire — failed gate(s): "
-            f"{', '.join(failed)}."
+            f"Leaning {direction} at "
+            f"{confidence:.1f}%, but no entry. "
+            f"Failed: {', '.join(failed)}."
         )
 
+    # -------------------------------------------------------------
+    # LAST CLOSED CANDLE
+    # -------------------------------------------------------------
+
+    last_closed = (
+        primary[-2]["close"]
+        if len(primary) >= 2
+        else primary[-1]["close"]
+    )
+
+    # -------------------------------------------------------------
+    # RESULT
+    # -------------------------------------------------------------
+
     return {
+
         "timeframe": timeframe,
+
         "direction": direction,
+
         "confidence": confidence,
+
         "price": price,
-        "bull_score": round(bull, 1),
-        "bear_score": round(bear, 1),
-        "confirmations": confirmations,
-        "risk_checks": checks,
-        "tradeable": tradeable,
-        "summary": summary,
 
-        # IMPORTANT:
-        # These are distances, NOT absolute market prices.
-        "sl_dist": sl_dist,
-        "tp_dist": tp_dist,
+        "bull_score": round(
+            bull,
+            1,
+        ),
 
-        "rr": round(rr, 2),
-        "atr": a,
-        "last_closed": last_closed,
-        "level_reasons": level_reasons,
+        "bear_score": round(
+            bear,
+            1,
+        ),
+
+        "confirmations":
+            confirmations,
+
+        "risk_checks":
+            checks,
+
+        "tradeable":
+            tradeable,
+
+        "summary":
+            summary,
+
+        # Distances only.
+        "sl_dist":
+            sl_dist,
+
+        "tp_dist":
+            tp_dist,
+
+        "rr":
+            round(
+                rr,
+                2,
+            ),
+
+        "atr":
+            atr,
+
+        "last_closed":
+            last_closed,
+
+        "level_reasons":
+            level_reasons,
+
+        "trailing": {
+            "enabled":
+                TRAILING_ENABLED,
+
+            "start_r":
+                TRAIL_START_R,
+
+            "breakeven_r":
+                BREAKEVEN_R,
+
+            "profit_lock_r":
+                PROFIT_LOCK_R,
+
+            "atr_multiplier":
+                TRAIL_ATR_MULT,
+
+            "one_way":
+                TRAIL_ONLY_FORWARD,
+        },
 
         "indicators": {
-            k: v
-            for k, v in snap.items()
-            if k not in (
+            key: value
+            for key, value in snap.items()
+            if key not in (
                 "levels",
                 "structure",
                 "pattern",
                 "breakout",
             )
-            and isinstance(v, (int, float))
+            and isinstance(
+                value,
+                (int, float),
+            )
         },
 
-        "levels": snap.get("levels"),
-        "structure": snap.get("structure"),
-        "pattern": snap.get("pattern"),
-        "breakout": snap.get("breakout"),
+        "levels":
+            snap.get("levels"),
+
+        "structure":
+            snap.get("structure"),
+
+        "pattern":
+            snap.get("pattern"),
+
+        "breakout":
+            snap.get("breakout"),
 
         "mtf": {
             tf: {
-                "trend": (
-                    "UP"
-                    if (
-                        (
-                            _f(sn, "ema21")
-                            or _f(sn, "ema20")
-                            or 0
+                "trend":
+                    (
+                        "UP"
+                        if (
+                            (
+                                _f(
+                                    sn,
+                                    "ema21",
+                                )
+                                or _f(
+                                    sn,
+                                    "ema20",
+                                )
+                                or 0
+                            )
+                            >
+                            (
+                                _f(
+                                    sn,
+                                    "ema50",
+                                )
+                                or 0
+                            )
                         )
-                        >
-                        (
-                            _f(sn, "ema50")
-                            or 0
-                        )
-                    )
-                    else "DOWN"
-                ),
-                "rsi": _f(sn, "rsi"),
-                "adx": _f(sn, "adx"),
+                        else "DOWN"
+                    ),
+
+                "rsi":
+                    _f(
+                        sn,
+                        "rsi",
+                    ),
+
+                "adx":
+                    _f(
+                        sn,
+                        "adx",
+                    ),
             }
-            for tf, sn in mtf_snaps.items()
+            for tf, sn
+            in mtf_snaps.items()
         },
     }
 
+
+# =====================================================================
+# MAX HOLD TIME
+# =====================================================================
 
 def timeout_seconds(
     timeframe: str,
     max_hold_minutes: Optional[float] = None,
 ) -> int:
-    """Scalper hold limit — an absolute wall-clock cap, not a candle count."""
 
     if max_hold_minutes:
-        return int(max_hold_minutes * 60)
+        return int(
+            max_hold_minutes * 60
+        )
 
     return (
-        INTERVAL_MINUTES.get(timeframe, 15)
+        INTERVAL_MINUTES.get(
+            timeframe,
+            15,
+        )
         * 60
         * 10
     )

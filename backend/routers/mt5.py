@@ -132,7 +132,7 @@ async def connect_account(body: Mt5ConnectRequest, request: Request) -> Mt5Conne
         bridge_url=bridge_url,
         setup_steps=[
             "Install the broker's MT5 terminal on a Windows VPS and sign in to this account.",
-            "Download GoldTerminalBridge.mq5, compile it in MetaEditor, and attach it to the broker's XAU/USD chart.",
+            "Download GoldTerminalBridge.mq5, compile it in MetaEditor, and attach it to the broker's BTC/USD chart.",
             "Add this site's HTTPS origin to MT5 Tools → Options → Expert Advisors → Allow WebRequest.",
             "Paste the one-time bridge URL and token into the EA inputs, then enable Algo Trading.",
         ],
@@ -242,13 +242,13 @@ async def bridge_heartbeat(
             {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
         )
         raise HTTPException(status_code=403, detail=detail)
-    if not mt5_execution.xau_symbol(body.resolved_symbol):
+    if not mt5_execution.BTC_symbol(body.resolved_symbol):
         await db.mt5_accounts.update_one(
-            {"id": account["id"]}, {"$set": {"status": "error", "last_error": "broker XAU/USD symbol not found"}}
+            {"id": account["id"]}, {"$set": {"status": "error", "last_error": "broker BTC/USD symbol not found"}}
         )
-        raise HTTPException(status_code=422, detail="resolved symbol is not an approved XAU/USD alias")
+        raise HTTPException(status_code=422, detail="resolved symbol is not an approved BTC/USD alias")
     if len(body.positions) > 1:
-        raise HTTPException(status_code=409, detail="only one bot-managed XAU/USD position is allowed")
+        raise HTTPException(status_code=409, detail="only one bot-managed BTC/USD position is allowed")
     updates = {
         "status": "connected",
         "resolved_symbol": body.resolved_symbol.upper(),
@@ -278,7 +278,7 @@ async def bridge_heartbeat(
     ).to_list(10)
     open_tickets: List[str] = []
     for pos in body.positions:
-        if not mt5_execution.xau_symbol(pos.symbol):
+        if not mt5_execution.BTC_symbol(pos.symbol):
             continue
         open_tickets.append(pos.ticket)
         await db.mt5_positions.update_one(

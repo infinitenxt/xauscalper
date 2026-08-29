@@ -69,7 +69,7 @@ export default function TickerBar({
                 className="text-sm font-semibold tracking-tight text-slate-100"
                 data-testid="ticker-symbol"
               >
-                {feed?.display_symbol ?? ticker?.symbol ?? "XAUUSDT"}
+                {feed?.display_symbol ?? ticker?.symbol ?? "BTCUSDT"}
               </span>
               <span className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
                 PAPER
@@ -179,7 +179,7 @@ export default function TickerBar({
               <span
                 className="rounded bg-amber-950 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-300"
                 data-testid="feed-proxy-badge"
-                title="Not XAU/USD — PAXGUSDT gold proxy data"
+                title="Not BTC/USD — PAXGUSDT gold proxy data"
               >
                 gold proxy
               </span>

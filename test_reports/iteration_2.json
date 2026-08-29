@@ -62,7 +62,7 @@
       "name": "admin-dashboard-core-regression",
       "lane": "browser",
       "status": "passed",
-      "evidence": "Signed in at /login with admin@infinitenxt.com/Harsh@10576, landed on dashboard: presence-indicator, live-price-ticker (numeric text), feed-live-source, ticker-symbol (contains 'XAU'), and signal-panel all visible; no >=400 responses observed on any /api/* call during the flow."
+      "evidence": "Signed in at /login with admin@infinitenxt.com/Harsh@10576, landed on dashboard: presence-indicator, live-price-ticker (numeric text), feed-live-source, ticker-symbol (contains 'BTC'), and signal-panel all visible; no >=400 responses observed on any /api/* call during the flow."
     }
   ],
   "bugs": [],

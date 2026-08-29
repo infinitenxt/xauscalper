@@ -95,7 +95,7 @@ export default function Mt5() {
       <Toaster position="bottom-right" richColors />
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-800 bg-[#111827] p-4">
-          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private XAU/USD-only execution · one bot position · separate MT5 subscription</p></div>
+          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private BTC/USD-only execution · one bot position · separate MT5 subscription</p></div>
           <Button variant="outline" size="sm" onClick={() => navigate("/")} data-testid="mt5-back-button" className="border-slate-700 text-slate-300"><ArrowLeft className="size-3.5" /> Terminal</Button>
         </header>
 

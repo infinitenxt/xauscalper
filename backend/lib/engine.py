@@ -604,7 +604,7 @@ async def open_trade(
         "user_id": user_id,
         "symbol": (
             market.feed_status.get("symbol")
-            or "XAUUSDT"
+            or "BTCUSDT"
         ),
         "direction": direction,
         "status": "OPEN",
@@ -2403,7 +2403,7 @@ async def dashboard(
                 market.feed_status.get(
                     "symbol"
                 )
-                or "XAUUSDT"
+                or "BTCUSDT"
             ),
             "price": price,
             **(

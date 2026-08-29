@@ -33,7 +33,7 @@ def _insert_command(account_id: str, user_id: str, action: str = "ENTRY", status
     js = f"""
     db.mt5_commands.insertOne({{
       id: "{cid}", idempotency_key: "{cid}", account_id: "{account_id}", user_id: "{user_id}",
-      action: "{action}", status: "{status}", symbol: "XAUUSD", direction: "BUY", lots: 0.01,
+      action: "{action}", status: "{status}", symbol: "BTCUSD", direction: "BUY", lots: 0.01,
       sl: 2390.0, tp: 2420.0, reason: "tscheck-ack", payload: {{}}, attempts: 1,
       created_at: new Date(), expires_at: new Date(Date.now()+30000), expires_epoch: 0,
       execution_result: "", broker_retcode: null, completed_at: null
@@ -60,7 +60,7 @@ def _connect_and_heartbeat(user_client) -> tuple[str, str]:
         "/mt5/bridge/heartbeat", headers={"Authorization": f"Bearer {token}"},
         json={
             "account_login": "44221", "broker_server": "Tscheck-Ack", "is_demo": True,
-            "resolved_symbol": "XAUUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
+            "resolved_symbol": "BTCUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
         },
     )
     assert hb.status_code == 200, hb.text[:300]

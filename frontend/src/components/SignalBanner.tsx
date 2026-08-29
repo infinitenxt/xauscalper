@@ -76,7 +76,7 @@ export default function SignalBanner({
               {skin.word}
             </div>
             <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">
-              XAUUSDT · {signal?.timeframe ?? "—"} scalp signal
+              BTCUSDT · {signal?.timeframe ?? "—"} scalp signal
             </div>
           </div>
         </div>

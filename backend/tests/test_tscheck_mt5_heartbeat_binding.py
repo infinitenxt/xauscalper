@@ -1,6 +1,6 @@
 """Heartbeat enforces exact account and broker safety binding.
 
-Matching login/server/demo-mode with an XAUUSD/GOLD/short-suffix alias is
+Matching login/server/demo-mode with an BTCUSD/GOLD/short-suffix alias is
 accepted; wrong login, wrong server, wrong mode, and non-gold symbols are
 rejected. A successful heartbeat also records EA version and (via a broker
 position) opened_at.
@@ -29,7 +29,7 @@ def _connect(user_client):
 def _heartbeat(user_client, token, **overrides):
     body = {
         "account_login": "9988", "broker_server": "Tscheck-Broker", "is_demo": True,
-        "resolved_symbol": "XAUUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
+        "resolved_symbol": "BTCUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
     }
     body.update(overrides)
     return user_client.post(
@@ -56,7 +56,7 @@ def test_heartbeat_binding_and_symbol_allowlist(client, backend_url):
         assert non_gold.status_code == 422, f"non-gold symbol should be rejected, got {non_gold.status_code} {non_gold.text[:300]}"
 
         # gold alias with a short broker suffix is accepted
-        alias_ok = _heartbeat(user_client, token, resolved_symbol="XAUUSD.a")
+        alias_ok = _heartbeat(user_client, token, resolved_symbol="BTCUSD.a")
         assert alias_ok.status_code == 200, f"gold alias should be accepted, got {alias_ok.status_code} {alias_ok.text[:300]}"
         assert alias_ok.json()["ea_version"] == "1.10"
 

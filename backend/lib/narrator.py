@@ -24,7 +24,7 @@ MODEL_NAME = "gpt-5.4"
 TIMEOUT_SECONDS = 25.0
 
 SYSTEM_MESSAGE = (
-    "You are the desk analyst for an educational gold (XAUUSDT) scalping bot. "
+    "You are the desk analyst for an educational gold (BTCUSDT) scalping bot. "
     "You are handed the exact technical facts behind a paper trade that was just opened. "
     "Write a tight explanation of why this trade was taken, in 3 to 4 sentences, "
     "in plain confident trading-desk English.\n\n"

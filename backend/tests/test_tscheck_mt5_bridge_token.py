@@ -51,7 +51,7 @@ def test_bridge_create_returns_one_token_and_hides_it_in_mongo(client, backend_u
             headers={"Authorization": "Bearer not-the-real-token"},
             json={
                 "account_login": "555111", "broker_server": "Tscheck-Demo", "is_demo": True,
-                "resolved_symbol": "XAUUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
+                "resolved_symbol": "BTCUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
                 "volume_min": 0.01, "volume_max": 50, "volume_step": 0.01,
                 "trade_allowed": True, "algo_trading": True, "positions": [],
             },
@@ -64,7 +64,7 @@ def test_bridge_create_returns_one_token_and_hides_it_in_mongo(client, backend_u
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "account_login": "555111", "broker_server": "Tscheck-Demo", "is_demo": True,
-                "resolved_symbol": "XAUUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
+                "resolved_symbol": "BTCUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
                 "volume_min": 0.01, "volume_max": 50, "volume_step": 0.01,
                 "trade_allowed": True, "algo_trading": True, "positions": [],
             },
@@ -79,7 +79,7 @@ def test_bridge_create_returns_one_token_and_hides_it_in_mongo(client, backend_u
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "account_login": "555111", "broker_server": "Tscheck-Demo", "is_demo": True,
-                "resolved_symbol": "XAUUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
+                "resolved_symbol": "BTCUSD", "balance": 1000, "equity": 1000, "free_margin": 1000,
                 "volume_min": 0.01, "volume_max": 50, "volume_step": 0.01,
                 "trade_allowed": True, "algo_trading": True, "positions": [],
             },

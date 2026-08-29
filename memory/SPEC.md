@@ -1,7 +1,7 @@
-# Gold Paper Terminal — XAUUSDT educational paper-trading SCALPER
+# Gold Paper Terminal — BTCUSDT educational paper-trading SCALPER
 
 ## What it is
-Single-page MT5-inspired dark trading terminal for XAUUSDT (gold), tuned for
+Single-page MT5-inspired dark trading terminal for BTCUSDT (gold), tuned for
 **1-minute scalping**. A backend engine polls real Binance gold market data,
 scores a 12-confirmation confluence signal (BUY / SELL / WAIT + confidence %),
 and auto-opens **virtual** paper trades when confidence ≥ 80%, every entry gate
@@ -11,7 +11,7 @@ explanation aloud and plays distinct alert tones on entry / TP / SL.
 
 ## Market data (IMPORTANT deviation)
 `backend/lib/market.py` is a provider chain:
-1. `binance-futures` — `https://fapi.binance.com/fapi/v1`, symbol `XAUUSDT` (primary)
+1. `binance-futures` — `https://fapi.binance.com/fapi/v1`, symbol `BTCUSDT` (primary)
 2. `binance-gold-spot` — `https://data-api.binance.vision/api/v3`, symbol `PAXGUSDT` (fallback)
 
 Binance Futures answers **HTTP 451 (restricted location)** from this pod's region,
@@ -227,11 +227,11 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   (right, `lg:col-span-7`). The active-position block was moved out of
   `WalletPanel`, which is now wallet stats only (`wallet`, `config` props).
 
-## Update — consistent XAU/USD feed + scalping engine upgrade
+## Update — consistent BTC/USD feed + scalping engine upgrade
 - **Single gold source.** `lib/market.py` provider chain: `binance-futures`
-  (fapi, XAUUSDT) → `binance-futures-www` (https://www.binance.com/fapi/v1 mirror with a browser
-  UA, same XAUUSDT market — this is what works from this pod, fapi returns 451) →
-  `binance-gold-proxy` (PAXGUSDT, labelled "PAXGUSDT GOLD PROXY (not XAU/USD)", last resort).
+  (fapi, BTCUSDT) → `binance-futures-www` (https://www.binance.com/fapi/v1 mirror with a browser
+  UA, same BTCUSDT market — this is what works from this pod, fapi returns 451) →
+  `binance-gold-proxy` (PAXGUSDT, labelled "PAXGUSDT GOLD PROXY (not BTC/USD)", last resort).
   REST candles, WS ticks and the forming candle always come from the SAME provider symbol; live
   data is tagged with its provider id and dropped when the provider changes, and a tick older
   than `STALE_AFTER` (15s) is reported stale instead of being shown as live.
@@ -280,8 +280,8 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   optional second adapter after the EA rollout is validated. The EA requires the broker's MT5 terminal
   on an always-on Windows VPS, Algo Trading enabled, the app origin added to MT5's WebRequest allowlist,
   and the exact MT5 login/server entered in the web connection form.
-- Only the canonical XAU/USD family is permitted. The bridge accepts exact broker-discovered aliases
-  `XAUUSD`, `GOLD`, and short suffix forms such as `XAUUSD.m`; arbitrary instruments are rejected by
+- Only the canonical BTC/USD family is permitted. The bridge accepts exact broker-discovered aliases
+  `BTCUSD`, `GOLD`, and short suffix forms such as `BTCUSD.m`; arbitrary instruments are rejected by
   both backend and EA. One bot-managed position may be open per connected account.
 - Users choose a fixed lot with no SaaS/admin cap. Every entry still must satisfy the broker's volume
   min/max/step, full-trading permission, free margin, spread (maximum 15% of ATR), directional SL/TP,
@@ -328,7 +328,7 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
 - MT5 entries now use the configured confidence threshold as the only strategy-quality gate. Session,
   presence, `signal.tradeable`, daily-loss and hourly-count filters remain part of paper trading but no
   longer suppress an MT5 command. Mandatory execution controls still apply: connected/authorized EA,
-  user and global auto-trade switches, entitlement, XAUUSD/GOLD alias, one open position, valid broker
+  user and global auto-trade switches, entitlement, BTCUSD/GOLD alias, one open position, valid broker
   lot size, free margin, account trading permission, and directional broker-side SL/TP.
 - Each MT5 account records an `entry_state` and exact `entry_reason` every engine cycle, so a qualified
   signal is visibly waiting, blocked, queued or in-position rather than silently skipped.

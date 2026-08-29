@@ -70,7 +70,7 @@ export default function AuthPage({ mode }: Props) {
           </div>
           <div className="leading-tight">
             <h1 className="text-sm font-semibold text-slate-100">Gold Paper Terminal</h1>
-            <p className="text-[11px] text-slate-500">Educational XAUUSDT scalping intelligence</p>
+            <p className="text-[11px] text-slate-500">Educational BTCUSDT scalping intelligence</p>
           </div>
         </div>
 

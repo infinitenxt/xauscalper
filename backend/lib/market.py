@@ -43,7 +43,7 @@ INTERVAL_MINUTES = {
 }
 
 SYMBOL = "BTCUSDT"
-DISPLAY_SYMBOL = "BTCUSD"
+DISPLAY_SYMBOL = "BTCUSDT"
 
 REST_BASE = "https://fapi.binance.com/fapi/v1"
 WS_BASE = "wss://fstream.binance.com/stream?streams="

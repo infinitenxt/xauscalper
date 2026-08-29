@@ -50,13 +50,13 @@ def _tf(timeframe: str) -> str:
 # Market
 # ---------------------------------------------------------------------------
 
-@router.get("/debug/xau-rest")
-async def debug_xau_rest(
+@router.get("/debug/BTC-rest")
+async def debug_BTC_rest(
     user: Dict[str, Any] = Sub,
 ):
-    from lib.market import test_xau_rest
+    from lib.market import test_BTC_rest
 
-    return await test_xau_rest()
+    return await test_BTC_rest()
 
 
 @router.get("/market/feed", response_model=FeedStatus)
@@ -82,7 +82,7 @@ async def get_ticker(
     stats = await market.get_stats_24h()
 
     return Ticker(
-        symbol=market.feed_status.get("symbol") or "XAUUSDT",
+        symbol=market.feed_status.get("symbol") or "BTCUSDT",
         price=price,
         **stats,
     )
@@ -108,7 +108,7 @@ async def get_candles(
         )
 
     return CandlesResponse(
-        symbol=market.feed_status.get("symbol") or "XAUUSDT",
+        symbol=market.feed_status.get("symbol") or "BTCUSDT",
         timeframe=tf,
         provider=market.feed_status.get("provider_label") or "",
         candles=candles,  # type: ignore[arg-type]

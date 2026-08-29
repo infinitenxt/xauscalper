@@ -1,13 +1,13 @@
 #property copyright "Gold Paper Terminal"
 #property version   "1.11"
 #property strict
-#property description "XAU/USD-only bridge. New entries come from the authenticated API; open-position protection runs locally."
+#property description "BTC/USD-only bridge. New entries come from the authenticated API; open-position protection runs locally."
 
 #include <Trade/Trade.mqh>
 
 input string BridgeUrl = "https://trade.infinitenxt.com/api/mt5/bridge";
 input string BridgeToken = "PASTE-ONE-TIME-TOKEN";
-input string BrokerGoldSymbol = ""; // blank = discover XAUUSD/GOLD alias
+input string BrokerGoldSymbol = ""; // blank = discover BTCUSD/GOLD alias
 input int PollSeconds = 3;
 input ulong MagicNumber = 860081;
 input int MaxDeviationPoints = 80;
@@ -30,8 +30,8 @@ bool IsGoldAlias(string symbol)
    string value = symbol;
    StringToUpper(value);
    StringReplace(value, "/", "");
-   if(value == "XAUUSD" || value == "GOLD") return true;
-   if(StringFind(value, "XAUUSD.") == 0 || StringFind(value, "XAUUSD_") == 0 || StringFind(value, "XAUUSD-") == 0) return true;
+   if(value == "BTCUSD" || value == "GOLD") return true;
+   if(StringFind(value, "BTCUSD.") == 0 || StringFind(value, "BTCUSD_") == 0 || StringFind(value, "BTCUSD-") == 0) return true;
    if(StringFind(value, "GOLD.") == 0 || StringFind(value, "GOLD_") == 0 || StringFind(value, "GOLD-") == 0) return true;
    return false;
 }
@@ -496,7 +496,7 @@ int OnInit()
    gold_symbol = ResolveGoldSymbol();
    if(gold_symbol == "")
    {
-      Print("No approved XAU/USD symbol alias was found.");
+      Print("No approved BTC/USD symbol alias was found.");
       return INIT_FAILED;
    }
    gv_prefix += (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + (string)MagicNumber + "_";

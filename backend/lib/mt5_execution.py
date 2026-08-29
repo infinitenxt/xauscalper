@@ -38,13 +38,13 @@ def connected(account: Dict[str, Any]) -> bool:
     )
 
 
-def xau_symbol(symbol: str) -> bool:
+def BTC_symbol(symbol: str) -> bool:
     value = symbol.upper().replace("/", "").strip()
 
-    if value in ("XAUUSD", "GOLD"):
+    if value in ("BTCUSD", "GOLD"):
         return True
 
-    for root in ("XAUUSD", "GOLD"):
+    for root in ("BTCUSD", "GOLD"):
         if value.startswith(root):
             suffix = value[len(root):]
             return (
@@ -459,7 +459,7 @@ async def process_cycle(
             )
             continue
 
-        if not xau_symbol(
+        if not BTC_symbol(
             str(
                 account.get(
                     "resolved_symbol"
@@ -471,7 +471,7 @@ async def process_cycle(
                 "blocked",
                 (
                     "The broker gold symbol is not an "
-                    "approved XAUUSD/GOLD alias"
+                    "approved BTCUSD/GOLD alias"
                 ),
             )
             continue

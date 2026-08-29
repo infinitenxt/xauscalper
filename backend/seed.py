@@ -28,7 +28,7 @@ PLANS: List[Dict[str, Any]] = [
         "price_inr": 999.0,
         "days": 30,
         "features": [
-            "Live XAUUSDT scalping signals",
+            "Live BTCUSDT scalping signals",
             "Auto paper trading with full risk management",
             "AI explanation on every trade",
             "Voice announcements and market commentary",
@@ -75,7 +75,7 @@ PLANS: List[Dict[str, Any]] = [
         "days": 30,
         "features": [
             "Demo and live MT5 account execution",
-            "XAU/USD-only safety allowlist",
+            "BTC/USD-only safety allowlist",
             "Confidence-triggered automatic entries",
             "EA-managed SL, TP, break-even, partials, trailing and autocut",
         ],
@@ -88,7 +88,7 @@ PLANS: List[Dict[str, Any]] = [
 SITE: Dict[str, Any] = {
     "id": "main",
     "site_name": "Gold Paper Terminal",
-    "tagline": "Educational XAUUSDT scalping intelligence",
+    "tagline": "Educational BTCUSDT scalping intelligence",
     "support_email": "support@goldterminal.app",
     "allow_registration": True,
     "invite_mode_enabled": True,
@@ -151,7 +151,7 @@ async def run() -> None:
                 "name": "MT5 Auto-Trading",
                 "features": [
                     "Demo and live MT5 account execution",
-                    "XAU/USD-only safety allowlist",
+                    "BTC/USD-only safety allowlist",
                     "Confidence-triggered automatic entries",
                     "EA-managed SL, TP, break-even, partials, trailing and autocut",
                 ],
