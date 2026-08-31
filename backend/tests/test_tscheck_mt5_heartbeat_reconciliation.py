@@ -20,7 +20,7 @@ HEARTBEAT_BASE = {
 
 def _mongo_eval(js: str) -> str:
     out = subprocess.run(
-        ["mongosh", "gold_terminal", "--quiet", "--eval", js],
+        ["mongosh", "bitcoin_terminal", "--quiet", "--eval", js],
         capture_output=True, text=True, timeout=20,
     )
     assert out.returncode == 0, f"mongosh failed: {out.stderr[:400]}"
@@ -34,7 +34,7 @@ def _insert_command(account_id: str, user_id: str, action: str, direction: str =
     js = f"""
     db.mt5_commands.insertOne({{
       id: "{cid}", idempotency_key: "{cid}", account_id: "{account_id}", user_id: "{user_id}",
-      action: "{action}", status: "accepted", symbol: "BTCUSD", direction: "{direction}", lots: 0.01,
+      action: "{action}", status: "accepted", symbol: "BTCUSDT", direction: "{direction}", lots: 0.01,
       sl: 0, tp: 0, reason: "tscheck-reconcile", payload: {payload_js}, attempts: 1,
       created_at: new Date(), expires_at: null, expires_epoch: 0,
       broker_ticket: {ticket_js}, execution_result: "", broker_retcode: null, completed_at: null
@@ -62,7 +62,7 @@ def _heartbeat(user_client, token, login, server, positions):
         "/mt5/bridge/heartbeat", headers={"Authorization": f"Bearer {token}"},
         json={
             "account_login": login, "broker_server": server, "is_demo": True,
-            "resolved_symbol": "BTCUSD", "ea_version": "1.10", "positions": positions, **HEARTBEAT_BASE,
+            "resolved_symbol": "BTCUSDT", "ea_version": "1.10", "positions": positions, **HEARTBEAT_BASE,
         },
     )
 
@@ -82,7 +82,7 @@ def test_accepted_entry_confirms_when_position_appears(client, backend_url):
         with_position = _heartbeat(
             user_client, token, "31200", "Tscheck-Recon",
             [{
-                "ticket": "800001", "symbol": "BTCUSD", "direction": "BUY", "volume": 0.01,
+                "ticket": "800001", "symbol": "BTCUSDT", "direction": "BUY", "volume": 0.01,
                 "entry_price": 2400.0, "current_price": 2401.0, "sl": 2390.0, "tp": 2420.0, "profit": 1.0,
             }],
         )
@@ -104,7 +104,7 @@ def test_accepted_close_confirms_when_ticket_disappears(client, backend_url):
         opened = _heartbeat(
             user_client, token, "31201", "Tscheck-Recon2",
             [{
-                "ticket": "800002", "symbol": "BTCUSD", "direction": "SELL", "volume": 0.01,
+                "ticket": "800002", "symbol": "BTCUSDT", "direction": "SELL", "volume": 0.01,
                 "entry_price": 2400.0, "current_price": 2399.0, "sl": 2410.0, "tp": 2380.0, "profit": 1.0,
             }],
         )

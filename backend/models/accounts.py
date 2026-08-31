@@ -138,7 +138,7 @@ class CouponPreview(BaseModel):
 
 # ------------------------------------------------------------------- admin io
 class SiteSettings(BaseModel):
-    site_name: str = "Gold Paper Terminal"
+    site_name: str = "Bitcoin Paper Terminal"
     tagline: str = "Educational BTCUSDT scalping intelligence"
     support_email: str = ""
     allow_registration: bool = True

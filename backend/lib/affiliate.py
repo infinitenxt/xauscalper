@@ -14,7 +14,7 @@ from lib.db import db
 
 def _base_code(username: str) -> str:
     clean = re.sub(r"[^A-Z0-9]", "", username.upper())[:5]
-    return clean or "GOLD"
+    return clean or "bitcoin"
 
 
 async def new_referral_code(username: str) -> str:
@@ -32,7 +32,7 @@ async def ensure_referral_code(user: Dict[str, Any]) -> str:
     if current:
         return current
     for _ in range(5):
-        code = await new_referral_code(str(user.get("username") or "GOLD"))
+        code = await new_referral_code(str(user.get("username") or "bitcoin"))
         try:
             result = await db.users.update_one(
                 {"id": user["id"], "$or": [{"referral_code": {"$exists": False}}, {"referral_code": ""}]},

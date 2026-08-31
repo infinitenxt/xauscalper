@@ -17,7 +17,7 @@
         "roles": {
           "border": "#1E293B",
           "border_focus": "#334155",
-          "accent_gold": "#F59E0B",
+          "accent_bitcoin": "#F59E0B",
           "profit_emerald": "#10B981",
           "profit_bg": "#064E3B",
           "loss_rose": "#F43F5E",

@@ -17,32 +17,32 @@ export type Mood =
 
 export const COMMENTARY: Record<Mood, string[]> = {
   strong_bull: [
-    "Goldy is taking a huge jump, buyers are all over this one.",
+    "bitcoiny is taking a huge jump, buyers are all over this one.",
     "Momentum is stacked to the upside, the bulls have the wheel.",
     "Every timeframe is pointing north, this is a clean bullish run.",
-    "Gold is climbing with conviction, volume is backing the move.",
+    "bitcoin is climbing with conviction, volume is backing the move.",
     "Buyers are pressing hard, resistance is starting to look thin.",
   ],
   bull: [
-    "Gold is leaning up, buyers have a slight edge here.",
+    "bitcoin is leaning up, buyers have a slight edge here.",
     "Mild upward drift, nothing to hunt just yet.",
     "Bulls are nudging price higher, the read is bullish but soft.",
     "Upside bias building, waiting for the confirmations to line up.",
-    "Gold is grinding upward, patient bulls are in control.",
+    "bitcoin is grinding upward, patient bulls are in control.",
   ],
   strong_bear: [
-    "Goldy is dropping hard, sellers are in full control.",
+    "bitcoiny is dropping hard, sellers are in full control.",
     "Heavy selling pressure, the floor keeps giving way.",
     "This is a steep slide, every bounce is getting sold.",
     "Bears are dominating, momentum is firmly to the downside.",
-    "Gold is falling fast, support levels are breaking one by one.",
+    "bitcoin is falling fast, support levels are breaking one by one.",
   ],
   bear: [
-    "Gold is leaning down, sellers have the slight edge.",
+    "bitcoin is leaning down, sellers have the slight edge.",
     "Soft bearish drift, no clean setup yet.",
     "Sellers are nudging price lower, the read is bearish but weak.",
     "Downside bias forming, still waiting on confirmation.",
-    "Gold is bleeding slowly, bears are quietly in front.",
+    "bitcoin is bleeding slowly, bears are quietly in front.",
   ],
   waiting: [
     "We are waiting for the hunt, no clean prey yet.",
@@ -57,7 +57,7 @@ export const COMMENTARY: Record<Mood, string[]> = {
     "We only take the trades that come to us, and this one has not.",
   ],
   volatile: [
-    "Volatility is spiking, gold is swinging wide, stay sharp.",
+    "Volatility is spiking, bitcoin is swinging wide, stay sharp.",
     "The range is expanding fast, stops need room here.",
     "Wild candles printing, this is where discipline pays.",
     "Big moves in both directions, the market is hunting stops.",
@@ -67,7 +67,7 @@ export const COMMENTARY: Record<Mood, string[]> = {
     "The market has gone quiet, barely a heartbeat in the candles.",
     "Volatility has dried up, there is nothing here to scalp.",
     "Dead tape, tight range, no reason to be involved.",
-    "Gold is asleep, we wait for it to wake up.",
+    "bitcoin is asleep, we wait for it to wake up.",
     "Too quiet to trade, the spread would eat any edge.",
   ],
   in_trade_winning: [

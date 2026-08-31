@@ -25,7 +25,7 @@ HEARTBEAT_BASE = {
 
 def _mongo_eval(js: str) -> str:
     out = subprocess.run(
-        ["mongosh", "gold_terminal", "--quiet", "--eval", js],
+        ["mongosh", "bitcoin_terminal", "--quiet", "--eval", js],
         capture_output=True, text=True, timeout=20,
     )
     assert out.returncode == 0, f"mongosh failed: {out.stderr[:400]}"
@@ -43,7 +43,7 @@ def _insert_entry_command(account_id: str, user_id: str, expires_in_seconds: int
     js = f"""
     db.mt5_commands.insertOne({{
       id: "{cid}", idempotency_key: "{cid}", account_id: "{account_id}", user_id: "{user_id}",
-      action: "ENTRY", status: "pending", symbol: "BTCUSD", direction: "BUY", lots: 0.01,
+      action: "ENTRY", status: "pending", symbol: "BTCUSDT", direction: "BUY", lots: 0.01,
       sl: 2390.0, tp: 2420.0, reason: "tscheck-gate", payload: {{}}, attempts: 0,
       created_at: new Date(), expires_at: {expires_at_js}, expires_epoch: {expires_epoch},
       execution_result: "", broker_retcode: null, completed_at: null
@@ -69,7 +69,7 @@ def _connect_and_heartbeat(user_client, mode="demo", login="88771", server="Tsch
         "/mt5/bridge/heartbeat", headers={"Authorization": f"Bearer {token}"},
         json={
             "account_login": login, "broker_server": server, "is_demo": mode == "demo",
-            "resolved_symbol": "BTCUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
+            "resolved_symbol": "BTCUSDT", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
         },
     )
     assert hb.status_code == 200, hb.text[:300]

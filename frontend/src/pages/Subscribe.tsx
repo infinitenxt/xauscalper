@@ -73,7 +73,7 @@ export default function Subscribe() {
         key: order.key_id,
         amount: order.amount,
         currency: order.currency,
-        name: "Gold Paper Terminal",
+        name: "Bitcoin Paper Terminal",
         description: `${order.plan.name} · ${order.plan.days} days`,
         order_id: order.order_id,
         prefill: { email: me?.email ?? "", name: me?.username ?? "" },
@@ -105,7 +105,7 @@ export default function Subscribe() {
               <Coins className="size-5 text-amber-400" />
             </div>
             <div className="leading-tight">
-              <h1 className="text-sm font-semibold text-slate-100">Gold Paper Terminal</h1>
+              <h1 className="text-sm font-semibold text-slate-100">Bitcoin Paper Terminal</h1>
               <p className="text-[11px] text-slate-500">
                 Signed in as {me?.email ?? "—"}
                 {me?.role === "admin" ? " · admin" : ""}

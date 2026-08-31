@@ -13,7 +13,7 @@
       "name": "test_3_new_admin_credentials_work (test_tscheck_admin_session_flows.py)",
       "lane": "backend",
       "status": "passed",
-      "evidence": "POST /auth/login {admin@infinitenxt.com, Harsh@10576} -> 200 {username: 'Admin', role: 'admin'}; POST /auth/login {admin@goldterminal.app, Harsh@10576} -> 401"
+      "evidence": "POST /auth/login {admin@infinitenxt.com, Harsh@10576} -> 200 {username: 'Admin', role: 'admin'}; POST /auth/login {admin@bitcointerminal.app, Harsh@10576} -> 401"
     },
     {
       "criterion": "New admin credentials work",
@@ -120,7 +120,7 @@
   ],
   "retest_needed": false,
   "notes": [
-    "helpers.py updated: ADMIN_EMAIL changed from admin@goldterminal.app to admin@infinitenxt.com per the new credentials in the briefing.",
+    "helpers.py updated: ADMIN_EMAIL changed from admin@bitcointerminal.app to admin@infinitenxt.com per the new credentials in the briefing.",
     "New admin-login-dependent backend tests were added to the existing test_tscheck_admin_session_flows.py module (not new files) to preserve the single-active-session-per-account xdist loadscope discipline documented in that file's docstring.",
     "One full-suite run produced a single transient 401 on test_4 (a race artifact of the concurrent worker setup); reran once in isolation (passed) and reran the full suite twice more (9/9 passed both times) - classified as flaky, not a bug, per the anti-loop rule.",
     "8 acceptance-matrix criteria all covered; 2 pre-existing regression-lane backend tests also reconfirmed passing under the new credentials."

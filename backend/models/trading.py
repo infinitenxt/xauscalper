@@ -1,305 +1,299 @@
-"""Pydantic v2 response models. Mirrored by frontend/src/lib/types.ts."""
-from __future__ import annotations
+"""Trading routes — paper trading dashboard, signals, and execution"""
 
-from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
+from fastapi import APIRouter, Request, HTTPException, Query
+from datetime import datetime, timezone
 
-from pydantic import BaseModel
+from lib import auth, paper_trading, market, strategy, settings as settings_mod
+from lib.db import db
 
-
-class Candle(BaseModel):
-    time: int
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
+router = APIRouter(tags=["trading"])
 
 
-class CandlesResponse(BaseModel):
-    symbol: str
-    timeframe: str
-    provider: str
-    candles: List[Candle]
+# =====================================================================
+# HELPERS
+# =====================================================================
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-class FeedStatus(BaseModel):
-    provider_id: Optional[str] = None
-    provider_label: str = ""
-    symbol: Optional[str] = None
-    display_symbol: Optional[str] = None
-    kind: Optional[str] = None
-    degraded: bool = False
-    is_proxy: bool = False
-    note: str = ""
-    last_error: str = ""
-    live_source: str = "rest"
-    ws_connected: bool = False
-    ws_reconnects: int = 0
-    stale: bool = True
-    tick_age_seconds: Optional[float] = None
+# =====================================================================
+# DASHBOARD (Multi-Symbol)
+# =====================================================================
+
+@router.get("/dashboard")
+async def get_dashboard(
+    request: Request,
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD")
+):
+    """Get full dashboard data for a specific symbol"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Update presence
+    await paper_trading.touch_presence(user["id"])
+    
+    # ✅ Get user settings
+    cfg = await settings_mod.get_settings(user["id"], refresh=True)
+    
+    # ✅ Get market data for symbol
+    price = await market.get_price(symbol)
+    if not price:
+        price = 0.0
+    
+    # ✅ Get candles for the symbol (FIXED: symbol first)
+    candles = await market.get_klines(symbol, timeframe, 160)
+    candles_by_tf = {timeframe: candles}
+    
+    # ✅ Get MTF candles (FIXED: symbol first)
+    mtf_map = {
+        "1m": ["1m", "5m", "15m", "30m", "1h"],
+        "5m": ["5m", "15m", "30m", "1h"],
+        "15m": ["15m", "1h"],
+        "30m": ["30m", "1h"],
+        "1h": ["1h"],
+    }
+    for tf in mtf_map.get(timeframe, []):
+        if tf != timeframe:
+            tf_candles = await market.get_klines(symbol, tf, 60)
+            candles_by_tf[tf] = tf_candles
+    
+    # ✅ Get signal for symbol
+    cfg_with_user = {**cfg, "user_id": user["id"]}
+    signal = await strategy.analyze(
+        symbol=symbol,
+        timeframe=timeframe,
+        candles_by_tf=candles_by_tf,
+        price=price,
+        cfg=cfg_with_user
+    )
+    
+    # ✅ Get open trade
+    open_trade = await paper_trading.get_open_trade(user["id"])
+    
+    # ✅ Decorate open trade with current price
+    if open_trade and price:
+        open_trade["current_price"] = price
+        open_trade["unrealized_pnl"] = paper_trading._pnl(open_trade, price)
+    
+    # ✅ Get wallet view
+    wallet = await paper_trading.wallet_view(user["id"], open_trade, price)
+    
+    # ✅ Get guards
+    guards = await paper_trading.guards(user["id"], cfg, present=True)
+    
+    # ✅ Get trade history
+    history = await paper_trading.trade_history(user["id"], 40)
+    
+    # ✅ Get feed status
+    feed_status = market.get_feed_status(symbol)
+    
+    # ✅ Get 24h stats
+    stats = await market.get_stats_24h(symbol)
+    
+    # ✅ Build ticker
+    ticker = {
+        "symbol": symbol,
+        "price": price,
+        "open_24h": stats.get("open_24h", 0),
+        "high_24h": stats.get("high_24h", 0),
+        "low_24h": stats.get("low_24h", 0),
+        "volume_24h": stats.get("volume_24h", 0),
+        "change_24h": stats.get("change_24h", 0),
+        "change_pct_24h": stats.get("change_pct_24h", 0),
+    }
+    
+    # ✅ Get engine health
+    engine_health = paper_trading.health()
+    
+    # ✅ Sessions (placeholder for now)
+    sessions = {
+        "utc_time": _now().isoformat(),
+        "sessions": [],
+        "active": [],
+        "liquidity": "medium",
+        "tradeable": True,
+        "note": "All sessions active",
+        "overlap_active": False,
+        "minutes_to_overlap": 0,
+    }
+    
+    # ✅ Build response
+    return {
+        "feed": feed_status,
+        "ticker": ticker,
+        "signal": signal,
+        "wallet": wallet,
+        "open_trade": open_trade,
+        "history": history,
+        "config": cfg,
+        "guards": guards,
+        "sessions": sessions,
+        "engine": engine_health,
+        "server_time": _now().isoformat(),
+    }
 
 
-class Ticker(BaseModel):
-    symbol: str
-    price: Optional[float] = None
-    open_24h: Optional[float] = None
-    high_24h: Optional[float] = None
-    low_24h: Optional[float] = None
-    volume_24h: Optional[float] = None
-    change_24h: Optional[float] = None
-    change_pct_24h: Optional[float] = None
+# =====================================================================
+# SIGNAL ONLY (Multi-Symbol)
+# =====================================================================
+
+@router.get("/signal")
+async def get_signal(
+    request: Request,
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD")
+):
+    """Get only the signal for a specific symbol"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Get user settings
+    cfg = await settings_mod.get_settings(user["id"], refresh=True)
+    
+    # ✅ Get market data
+    price = await market.get_price(symbol)
+    if not price:
+        price = 0.0
+    
+    # ✅ Get candles (FIXED: symbol first)
+    candles = await market.get_klines(symbol, timeframe, 160)
+    candles_by_tf = {timeframe: candles}
+    
+    # ✅ Get MTF candles (FIXED: symbol first)
+    mtf_map = {
+        "1m": ["1m", "5m", "15m", "30m", "1h"],
+        "5m": ["5m", "15m", "30m", "1h"],
+        "15m": ["15m", "1h"],
+        "30m": ["30m", "1h"],
+        "1h": ["1h"],
+    }
+    for tf in mtf_map.get(timeframe, []):
+        if tf != timeframe:
+            tf_candles = await market.get_klines(symbol, tf, 60)
+            candles_by_tf[tf] = tf_candles
+    
+    # ✅ Get signal
+    cfg_with_user = {**cfg, "user_id": user["id"]}
+    signal = await strategy.analyze(
+        symbol=symbol,
+        timeframe=timeframe,
+        candles_by_tf=candles_by_tf,
+        price=price,
+        cfg=cfg_with_user
+    )
+    
+    return signal
 
 
-class Confirmation(BaseModel):
-    name: str
-    weight: float
-    vote: float
-    direction: str
-    state: str
-    detail: str
+# =====================================================================
+# MARKET CANDLES (FIXED)
+# =====================================================================
+
+@router.get("/market/candles")
+async def get_candles(
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD"),
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    limit: int = Query(160, description="Number of candles", ge=10, le=500)
+):
+    """Get candles for a specific symbol"""
+    try:
+        # ✅ FIXED: symbol first, then timeframe, then limit
+        candles = await market.get_klines(symbol, timeframe, limit)
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "provider": "coinbase",
+            "candles": candles
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Market data unavailable: {str(e)}")
 
 
-class RiskCheck(BaseModel):
-    name: str
-    passed: bool
-    detail: str
+# =====================================================================
+# CLOSE TRADE
+# =====================================================================
+
+@router.post("/trades/{trade_id}/close")
+async def close_trade(
+    trade_id: str,
+    request: Request
+):
+    """Close a paper trade"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Find trade
+    trade = await db.trades.find_one({
+        "id": trade_id,
+        "user_id": user["id"],
+        "status": "OPEN"
+    })
+    
+    if not trade:
+        raise HTTPException(status_code=404, detail="Open trade not found")
+    
+    # ✅ Get current price
+    symbol = trade.get("symbol", "BTCUSDT")
+    price = await market.get_price(symbol)
+    
+    if not price:
+        raise HTTPException(status_code=503, detail="Market price unavailable")
+    
+    # ✅ Close trade
+    closed = await paper_trading.close_trade(
+        trade=trade,
+        price=price,
+        reason="MANUAL CLOSE",
+        explanation="User manually closed the position from dashboard"
+    )
+    
+    return closed
 
 
-class Levels(BaseModel):
-    support: List[float] = []
-    resistance: List[float] = []
+# =====================================================================
+# PRESENCE
+# =====================================================================
+
+@router.post("/presence")
+async def presence(request: Request):
+    """Update user presence (dashboard open)"""
+    user = await auth.require_subscription(request)
+    await paper_trading.touch_presence(user["id"])
+    return {"status": "ok"}
 
 
-class Read(BaseModel):
-    label: str = "UNCLEAR"
-    bias: float = 0.0
-    detail: str = ""
+# =====================================================================
+# ENGINE RESET
+# =====================================================================
+
+@router.post("/engine/reset")
+async def reset_engine(request: Request):
+    """Reset paper trading account"""
+    user = await auth.require_subscription(request)
+    wallet = await paper_trading.reset_all(user["id"])
+    return wallet
 
 
-class BreakoutRead(BaseModel):
-    label: str = ""
-    bias: float = 0.0
-    detail: str = ""
-    quality: float = 0.0
-    fake: bool = False
-    chop: bool = False
-    efficiency: float = 0.0
+# =====================================================================
+# ENGINE HEALTH
+# =====================================================================
+
+@router.get("/engine/health")
+async def engine_health():
+    """Get engine health status"""
+    return paper_trading.health()
 
 
-class MtfRead(BaseModel):
-    trend: str
-    rsi: Optional[float] = None
-    adx: Optional[float] = None
+# =====================================================================
+# SUPPORTED SYMBOLS
+# =====================================================================
 
-
-class Signal(BaseModel):
-    timeframe: str
-    direction: str
-    confidence: float
-    price: Optional[float] = None
-    last_closed: Optional[float] = None
-    bull_score: float = 0.0
-    bear_score: float = 0.0
-    confirmations: List[Confirmation] = []
-    risk_checks: List[RiskCheck] = []
-    tradeable: bool = False
-    summary: str = ""
-    sl: Optional[float] = None
-    tp: Optional[float] = None
-    rr: float = 0.0
-    atr: Optional[float] = None
-    level_reasons: List[str] = []
-    indicators: Dict[str, float] = {}
-    levels: Levels = Levels()
-    structure: Read = Read()
-    pattern: Read = Read()
-    breakout: BreakoutRead = BreakoutRead()
-    mtf: Dict[str, MtfRead] = {}
-    generated_at: Optional[str] = None
-
-
-class Wallet(BaseModel):
-    id: str
-    balance: float
-    starting_balance: float
-    realized_pnl: float
-    wins: int
-    losses: int
-    trades_count: int
-    unrealized_pnl: float = 0.0
-    equity: float = 0.0
-    win_rate: float = 0.0
-    profit_factor: float = 0.0
-    max_drawdown_pct: float = 0.0
-    return_pct: float = 0.0
-    day_pnl: float = 0.0
-    open_position: bool = False
-
-
-class Trade(BaseModel):
-    id: str
-    user_id: str = ""
-    symbol: str
-    direction: str
-    status: str
-    timeframe: str
-    session: str = ""
-    liquidity: str = ""
-    entry: float
-    sl: float
-    tp: float
-    initial_sl: float
-    qty: float
-    notional: float
-    risk_amount: float
-    r_distance: float
-    rr_planned: float
-    confidence: float
-    atr: float
-    trailing_active: bool = False
-    breakeven_done: bool = False
-    partial_done: bool = False
-    partial_pnl: float = 0.0
-    initial_qty: Optional[float] = None
-    max_hold_minutes: Optional[int] = None
-    best_r: float = 0.0
-    opened_at: datetime
-    timeout_at: Optional[datetime] = None
-    entry_reasons: List[str] = []
-    risk_reasons: List[str] = []
-    ai_explanation: Optional[str] = None
-    ai_status: str = "pending"
-    management_log: List[str] = []
-    exit_price: Optional[float] = None
-    exit_reason: Optional[str] = None
-    exit_explanation: Optional[str] = None
-    pnl: Optional[float] = None
-    pnl_pct: Optional[float] = None
-    r_multiple: Optional[float] = None
-    closed_at: Optional[datetime] = None
-    duration_seconds: Optional[int] = None
-    # live-only decoration
-    current_price: Optional[float] = None
-    unrealized_pnl: Optional[float] = None
-    unrealized_pnl_pct: Optional[float] = None
-    tp_progress_pct: Optional[float] = None
-    age_seconds: Optional[int] = None
-    seconds_to_timeout: Optional[int] = None
-
-
-class EngineConfig(BaseModel):
-    auto_trade_enabled: bool
-    session_filter_enabled: bool = True
-    primary_timeframe: str
-    confidence_threshold: float
-    min_adx: float
-    min_rr: float
-    min_atr_pct: float
-    max_atr_pct: float
-    stale_entry_max_pct: float
-    risk_per_trade_pct: float
-    max_leverage: float
-    atr_sl_mult: float
-    base_rr: float
-    trail_atr_mult: float
-    breakeven_at_r: float
-    trail_start_r: float
-    partial_tp_at_r: float
-    partial_tp_fraction: float
-    max_hold_minutes: int
-    cooldown_seconds: int
-    daily_loss_limit_pct: float
-    max_trades_per_hour: int
-    consecutive_loss_pause: int
-    pause_minutes_after_losses: int
-    starting_balance: float
-    timeframes: List[str]
-    loop_seconds: float
-    presence_window_seconds: float = 25.0
-    disclaimer: str
-
-
-class SettingsPatch(BaseModel):
-    auto_trade_enabled: Optional[bool] = None
-    session_filter_enabled: Optional[bool] = None
-    primary_timeframe: Optional[str] = None
-    confidence_threshold: Optional[float] = None
-    min_adx: Optional[float] = None
-    min_rr: Optional[float] = None
-    stale_entry_max_pct: Optional[float] = None
-    risk_per_trade_pct: Optional[float] = None
-    atr_sl_mult: Optional[float] = None
-    base_rr: Optional[float] = None
-    trail_atr_mult: Optional[float] = None
-    breakeven_at_r: Optional[float] = None
-    trail_start_r: Optional[float] = None
-    partial_tp_at_r: Optional[float] = None
-    partial_tp_fraction: Optional[float] = None
-    max_hold_minutes: Optional[int] = None
-    cooldown_seconds: Optional[int] = None
-    daily_loss_limit_pct: Optional[float] = None
-    max_trades_per_hour: Optional[int] = None
-    consecutive_loss_pause: Optional[int] = None
-    pause_minutes_after_losses: Optional[int] = None
-
-
-class Guards(BaseModel):
-    checks: List[RiskCheck] = []
-    blocked: bool = False
-    block_reason: str = ""
-    last_block_reason: str = ""
-    day_pnl: float = 0.0
-    trades_last_hour: int = 0
-    loss_streak: int = 0
-    present: bool = False
-
-
-class EngineHealth(BaseModel):
-    running: bool = False
-    watchdog_running: bool = False
-    started_at: Optional[str] = None
-    cycles: int = 0
-    last_cycle_at: Optional[str] = None
-    last_error: str = ""
-    restarts: int = 0
-    loop_seconds: float = 3.0
-    presence_window_seconds: float = 25.0
-    server_time: Optional[str] = None
-
-
-class Dashboard(BaseModel):
-    feed: FeedStatus
-    ticker: Ticker
-    signal: Signal
-    wallet: Wallet
-    open_trade: Optional[Trade] = None
-    history: List[Trade] = []
-    config: EngineConfig
-    guards: Guards
-    sessions: "SessionSnapshotRef"
-    engine: EngineHealth
-    server_time: str
-
-
-class TradingSessionRef(BaseModel):
-    name: str
-    active: bool
-    open_utc: str
-    close_utc: str
-    minutes_to_open: int
-    minutes_to_close: int
-
-
-class SessionSnapshotRef(BaseModel):
-    utc_time: str
-    sessions: List[TradingSessionRef]
-    active: List[str]
-    liquidity: str
-    tradeable: bool
-    note: str
-    overlap_active: bool
-    minutes_to_overlap: int
-
-
-Dashboard.model_rebuild()
+@router.get("/symbols")
+async def get_symbols():
+    """Get list of supported symbols"""
+    return {
+        "symbols": [
+            {"symbol": "BTCUSDT", "display": "BTC/USD", "min_price": 10000, "max_price": 150000},
+            {"symbol": "XAUUSD", "display": "XAU/USD", "min_price": 1500, "max_price": 3500},
+        ]
+    }

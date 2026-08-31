@@ -31,7 +31,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(auth.r
 
 SITE_DEFAULTS: Dict[str, Any] = {
     "id": "main",
-    "site_name": "Gold Paper Terminal",
+    "site_name": "Bitcoin Paper Terminal",
     "tagline": "Educational BTCUSDT scalping intelligence",
     "support_email": "",
     "allow_registration": True,

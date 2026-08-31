@@ -1,25 +1,25 @@
-"""Live BTC market data layer.
+"""Multi-Symbol Market Data Layer - Coinbase + Bybit
 
-Source:
-- Binance Futures BTCUSDT
-
-REST and WebSocket data always use the same BTCUSDT market.
+Supported Symbols:
+- BTCUSDT → Coinbase (BTC-USD)
+- XAUUSD → Bybit (XAUUSDT)
 
 Features:
-- Live WebSocket price
-- Live forming candles
+- Per-symbol provider routing
+- Live WebSocket price per symbol
+- Live forming candles per symbol
 - REST candle fallback
 - REST price fallback
 - Stale tick protection
 - Automatic WebSocket reconnect
 - Cached REST requests
-- 24/7 BTC market
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from contextlib import suppress
 from typing import Any, Dict, List, Optional
@@ -29,7 +29,7 @@ import websockets
 
 
 # ---------------------------------------------------------------------------
-# Market configuration
+# Market configuration - Multi-Provider
 # ---------------------------------------------------------------------------
 
 INTERVALS = ["1m", "5m", "15m", "30m", "1h"]
@@ -42,11 +42,69 @@ INTERVAL_MINUTES = {
     "1h": 60,
 }
 
-SYMBOL = "BTCUSDT"
-DISPLAY_SYMBOL = "BTCUSDT"
+# ✅ Define supported symbols with provider routing
+SUPPORTED_SYMBOLS = {
+    "BTCUSDT": {
+        "provider": "coinbase",
+        "product_id": "BTC-USD",
+        "display": "BTCUSDT",
+        "min_price": 10000,
+        "max_price": 150000,
+        "point": 0.01,
+        "digits": 2,
+        "rest_base": "https://api.coinbase.com/api/v3",
+        "ws_base": "wss://advanced-trade-ws.coinbase.com",
+        "candles_path": "/brokerage/market/products/BTC-USD/candles",
+        "price_path": "/brokerage/market/products/BTC-USD/ticker",
+        "stats_path": "/brokerage/market/products/BTC-USD",
+        "granularity_map": {
+            "1m": "ONE_MINUTE",
+            "5m": "FIVE_MINUTE",
+            "15m": "FIFTEEN_MINUTE",
+            "30m": "THIRTY_MINUTE",
+            "1h": "ONE_HOUR",
+        },
+        "granularity_seconds": {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "30m": 1800,
+            "1h": 3600,
+        }
+    },
+    "XAUUSD": {
+        "provider": "bybit",
+        "product_id": "XAUUSDT",
+        "display": "XAUUSD",
+        "min_price": 1500,
+        "max_price": 3500,
+        "point": 0.01,
+        "digits": 2,
+        "rest_base": "https://api.bybit.com/v5",
+        "ws_base": "wss://stream.bybit.com/v5/public/spot",
+        "candles_path": "/market/kline",
+        "price_path": "/market/tickers",
+        "stats_path": "/market/tickers",
+        "category": "spot",
+        "granularity_map": {
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+        },
+        "granularity_seconds": {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "30m": 1800,
+            "1h": 3600,
+        }
+    }
+}
 
-REST_BASE = "https://fapi.binance.com/fapi/v1"
-WS_BASE = "wss://fstream.binance.com/stream?streams="
+# ✅ Default symbol from env
+DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "BTCUSDT")
 
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -58,6 +116,24 @@ KLINE_TTL = 4.0
 PRICE_TTL = 2.0
 STALE_AFTER = 15.0
 
+PROVIDER_ID = "multi"
+PROVIDER_LABEL = "Multi-Provider"
+
+# ---------------------------------------------------------------------------
+# Per-symbol state
+# ---------------------------------------------------------------------------
+
+_symbol_data: Dict[str, Dict[str, Any]] = {}
+_ws_tasks: Dict[str, asyncio.Task] = {}
+_ws_running: Dict[str, bool] = {}
+
+_kline_cache: Dict[str, Dict[str, Any]] = {}
+_price_cache: Dict[str, Dict[str, Any]] = {}
+
+_live_price: Dict[str, Optional[float]] = {}
+_live_price_at: Dict[str, float] = {}
+_live_candles: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
 
 # ---------------------------------------------------------------------------
 # HTTP client
@@ -68,647 +144,610 @@ _client: Optional[httpx.AsyncClient] = None
 
 def _http() -> httpx.AsyncClient:
     global _client
-
     if _client is None:
         _client = httpx.AsyncClient(
             timeout=12.0,
             headers={"User-Agent": BROWSER_UA},
         )
-
     return _client
 
 
 async def close_http() -> None:
     global _client
-
     if _client is not None:
         await _client.aclose()
         _client = None
 
 
 # ---------------------------------------------------------------------------
-# Caches
+# Symbol helpers
 # ---------------------------------------------------------------------------
 
-_kline_cache: Dict[str, Any] = {}
-_price_cache: Dict[str, Any] = {}
+def get_provider(symbol: str) -> str:
+    """Get provider for a symbol"""
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    return info.get("provider", "coinbase")
 
 
-# ---------------------------------------------------------------------------
-# Feed status
-# ---------------------------------------------------------------------------
-
-feed_status: Dict[str, Any] = {
-    "provider_id": "binance-futures",
-    "provider_label": "Binance Futures BTCUSDT",
-    "symbol": SYMBOL,
-    "display_symbol": DISPLAY_SYMBOL,
-    "kind": "futures",
-    "degraded": False,
-    "is_proxy": False,
-    "note": "Live Binance Futures BTCUSDT market data.",
-    "last_error": "",
-    "last_update": None,
-    "live_source": "rest",
-    "ws_connected": False,
-    "ws_reconnects": 0,
-    "stale": True,
-    "tick_age_seconds": None,
-}
+def get_product_id(symbol: str) -> str:
+    """Get product ID for a symbol"""
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    return info.get("product_id", f"{symbol}-USD")
 
 
-# ---------------------------------------------------------------------------
-# Live WebSocket state
-# ---------------------------------------------------------------------------
+def get_display_symbol(symbol: str) -> str:
+    """Get display symbol"""
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    return info.get("display", symbol)
 
-_ws_task: Optional[asyncio.Task] = None
-_ws_running = False
 
-_live_price: Optional[float] = None
-_live_price_at: float = 0.0
+def get_symbol_info(symbol: str) -> Dict[str, Any]:
+    """Get symbol configuration"""
+    return SUPPORTED_SYMBOLS.get(symbol, {})
 
-_live_candles: Dict[str, Dict[str, Any]] = {}
+
+def get_feed_status(symbol: str = None) -> Dict[str, Any]:
+    """Get feed status for a symbol"""
+    symbol = symbol or DEFAULT_SYMBOL
+    return _symbol_data.get(symbol, {
+        "symbol": symbol,
+        "display_symbol": get_display_symbol(symbol),
+        "provider": get_provider(symbol),
+        "ws_connected": False,
+        "stale": True,
+        "last_error": "",
+        "last_price": None,
+        "tick_age_seconds": None,
+    })
 
 
 # ---------------------------------------------------------------------------
-# Live data helpers
+# Per-symbol data helpers
 # ---------------------------------------------------------------------------
 
-def _drop_live_data() -> None:
-    global _live_price
-    global _live_price_at
+def _init_symbol(symbol: str) -> None:
+    """Initialize state for a symbol"""
+    if symbol not in _symbol_data:
+        _symbol_data[symbol] = {
+            "symbol": symbol,
+            "display_symbol": get_display_symbol(symbol),
+            "provider": get_provider(symbol),
+            "ws_connected": False,
+            "stale": True,
+            "last_error": "",
+            "last_price": None,
+            "tick_age_seconds": None,
+            "last_update": None,
+        }
+    if symbol not in _live_price:
+        _live_price[symbol] = None
+        _live_price_at[symbol] = 0.0
+    if symbol not in _live_candles:
+        _live_candles[symbol] = {}
 
-    _live_price = None
-    _live_price_at = 0.0
 
-    _live_candles.clear()
-    _price_cache.pop("last", None)
+def _drop_live_data(symbol: str) -> None:
+    _init_symbol(symbol)
+    _live_price[symbol] = None
+    _live_price_at[symbol] = 0.0
+    _live_candles[symbol] = {}
+    _price_cache.pop(symbol, None)
 
 
-def _live_fresh() -> bool:
+def _live_fresh(symbol: str) -> bool:
+    _init_symbol(symbol)
     return bool(
-        _live_price is not None
-        and (time.time() - _live_price_at) < STALE_AFTER
+        _live_price[symbol] is not None
+        and (time.time() - _live_price_at[symbol]) < STALE_AFTER
     )
 
 
-def _update_live_price(
-    price: float,
-    source: str,
-) -> None:
-    global _live_price
-    global _live_price_at
-
-    _live_price = price
-    _live_price_at = time.time()
-
-    _price_cache["last"] = (
-        time.time(),
-        price,
-    )
-
-    feed_status["live_source"] = source
-    feed_status["stale"] = False
-    feed_status["tick_age_seconds"] = 0.0
-    feed_status["last_update"] = time.time()
+def _update_live_price(symbol: str, price: float, source: str) -> None:
+    _init_symbol(symbol)
+    _live_price[symbol] = price
+    _live_price_at[symbol] = time.time()
+    
+    _price_cache[symbol] = (time.time(), price)
+    
+    status = _symbol_data[symbol]
+    status["last_price"] = price
+    status["stale"] = False
+    status["tick_age_seconds"] = 0.0
+    status["last_update"] = time.time()
 
 
-def _update_live_candle(
-    interval: str,
-    kline: Dict[str, Any],
-) -> None:
+def _update_live_candle(symbol: str, interval: str, candle_data: Dict[str, Any]) -> None:
+    _init_symbol(symbol)
     candle = {
-        "time": int(kline["t"]),
-        "open": float(kline["o"]),
-        "high": float(kline["h"]),
-        "low": float(kline["l"]),
-        "close": float(kline["c"]),
-        "volume": float(kline["v"]),
-        "close_time": int(kline["T"]),
-        "closed": bool(kline["x"]),
+        "time": int(candle_data.get("start", candle_data.get("t", 0))),
+        "open": float(candle_data.get("open", candle_data.get("o", 0))),
+        "high": float(candle_data.get("high", candle_data.get("h", 0))),
+        "low": float(candle_data.get("low", candle_data.get("l", 0))),
+        "close": float(candle_data.get("close", candle_data.get("c", 0))),
+        "volume": float(candle_data.get("volume", candle_data.get("v", 0))),
+        "close_time": int(candle_data.get("close_time", candle_data.get("T", 0))),
+        "closed": candle_data.get("closed", candle_data.get("x", False)),
     }
+    _live_candles[symbol][interval] = candle
 
-    _live_candles[interval] = candle
 
-    # Only update REST cache after the candle closes.
-    if not candle["closed"]:
+# ---------------------------------------------------------------------------
+# WebSocket - Multi-Provider
+# ---------------------------------------------------------------------------
+
+async def _websocket_loop(symbol: str) -> None:
+    """WebSocket loop for a specific symbol"""
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    provider = info.get("provider", "coinbase")
+    product_id = info.get("product_id", f"{symbol}-USD")
+    ws_base = info.get("ws_base")
+    
+    if not ws_base:
         return
-
-    for key, cached in list(_kline_cache.items()):
-        if not key.startswith(f"{interval}:"):
-            continue
-
-        candles = list(cached[1])
-
-        if candles and candles[-1]["time"] == candle["time"]:
-            candles[-1] = candle
-        else:
-            candles.append(candle)
-
-        _kline_cache[key] = (
-            time.time(),
-            candles,
-        )
-
-
-# ---------------------------------------------------------------------------
-# WebSocket
-# ---------------------------------------------------------------------------
-
-async def _websocket_loop() -> None:
-    global _ws_running
-
-    streams = [
-        f"{SYMBOL.lower()}@trade",
-        *[
-            f"{SYMBOL.lower()}@kline_{tf}"
-            for tf in INTERVALS
-        ],
-    ]
-
-    url = f"{WS_BASE}{'/'.join(streams)}"
-
-    _ws_running = True
-
-    while _ws_running:
+    
+    _ws_running[symbol] = True
+    
+    while _ws_running.get(symbol, False):
         try:
             async with websockets.connect(
-                url,
+                ws_base,
                 ping_interval=20,
                 ping_timeout=20,
                 close_timeout=5,
             ) as ws:
-
-                feed_status["ws_connected"] = True
-                feed_status["last_error"] = ""
-
+                if provider == "coinbase":
+                    subscribe_msg = {
+                        "type": "subscribe",
+                        "product_ids": [product_id],
+                        "channel": "ticker"
+                    }
+                elif provider == "bybit":
+                    subscribe_msg = {
+                        "op": "subscribe",
+                        "args": [f"ticker.{product_id}"]
+                    }
+                else:
+                    break
+                
+                await ws.send(json.dumps(subscribe_msg))
+                
+                status = _symbol_data[symbol]
+                status["ws_connected"] = True
+                status["last_error"] = ""
+                
                 async for raw in ws:
-                    if not _ws_running:
+                    if not _ws_running.get(symbol, False):
                         break
-
+                    
                     try:
                         message = json.loads(raw)
-
-                        stream = message.get(
-                            "stream",
-                            "",
-                        )
-
-                        data = message.get(
-                            "data",
-                            {},
-                        )
-
-                        if "@trade" in stream:
-                            price = float(data["p"])
-
-                            _update_live_price(
-                                price,
-                                "websocket",
-                            )
-
-                        elif "@kline_" in stream:
-                            kline = data.get("k")
-
-                            if not kline:
-                                continue
-
-                            interval = str(
-                                kline.get("i")
-                            )
-
-                            if interval in INTERVALS:
-                                _update_live_candle(
-                                    interval,
-                                    kline,
-                                )
-
+                        
+                        if provider == "coinbase":
+                            msg_type = message.get("type", "")
+                            if msg_type == "ticker":
+                                price = float(message.get("price", 0))
+                                if price > 0:
+                                    _update_live_price(symbol, price, "websocket")
+                            elif msg_type == "candle":
+                                candles = message.get("candles", [])
+                                for c in candles:
+                                    interval = str(c.get("interval", "1m"))
+                                    if interval in INTERVALS:
+                                        _update_live_candle(symbol, interval, c)
+                        
+                        elif provider == "bybit":
+                            topic = message.get("topic", "")
+                            data = message.get("data", {})
+                            
+                            if "ticker." in topic:
+                                price = float(data.get("lastPrice", 0))
+                                if price > 0:
+                                    _update_live_price(symbol, price, "websocket")
+                                    
                     except Exception as exc:
-                        feed_status["last_error"] = (
-                            f"websocket message: {exc}"
-                        )
-
+                        status["last_error"] = f"websocket message: {exc}"
+                        
         except asyncio.CancelledError:
-            feed_status["ws_connected"] = False
+            status = _symbol_data.get(symbol, {})
+            status["ws_connected"] = False
             raise
-
+            
         except Exception as exc:
-            feed_status["ws_connected"] = False
-            feed_status["ws_reconnects"] = (
-                int(
-                    feed_status.get(
-                        "ws_reconnects"
-                    )
-                    or 0
-                )
-                + 1
-            )
-
-            feed_status["last_error"] = (
-                f"websocket disconnected: {exc}"
-            )
-
+            status = _symbol_data.get(symbol, {})
+            status["ws_connected"] = False
+            status["last_error"] = f"websocket disconnected: {exc}"
             await asyncio.sleep(3)
+    
+    status = _symbol_data.get(symbol, {})
+    status["ws_connected"] = False
+    _ws_running[symbol] = False
 
-    feed_status["ws_connected"] = False
-    _ws_running = False
 
-
-async def start_feed() -> None:
-    """Start the BTCUSDT WebSocket feed."""
-
-    global _ws_task
-
-    if (
-        _ws_task
-        and not _ws_task.done()
-    ):
+async def start_feed(symbol: str = None) -> None:
+    """Start WebSocket feed for a symbol"""
+    symbol = symbol or DEFAULT_SYMBOL
+    _init_symbol(symbol)
+    
+    if symbol in _ws_tasks and not _ws_tasks[symbol].done():
         return
-
-    _drop_live_data()
-
-    _ws_task = asyncio.create_task(
-        _websocket_loop()
-    )
+    
+    _drop_live_data(symbol)
+    _ws_tasks[symbol] = asyncio.create_task(_websocket_loop(symbol))
 
 
-async def stop_websocket() -> None:
-    global _ws_running
-    global _ws_task
+async def start_all_feeds() -> None:
+    """Start WebSocket feeds for all supported symbols"""
+    for symbol in SUPPORTED_SYMBOLS:
+        await start_feed(symbol)
 
-    _ws_running = False
 
-    if (
-        _ws_task
-        and not _ws_task.done()
-    ):
-        _ws_task.cancel()
-
+async def stop_websocket(symbol: str = None) -> None:
+    """Stop WebSocket for a symbol"""
+    symbol = symbol or DEFAULT_SYMBOL
+    _ws_running[symbol] = False
+    
+    if symbol in _ws_tasks and not _ws_tasks[symbol].done():
+        _ws_tasks[symbol].cancel()
         with suppress(asyncio.CancelledError):
-            await _ws_task
-
-    _ws_task = None
-
-    feed_status["ws_connected"] = False
+            await _ws_tasks[symbol]
+    
+    _ws_tasks.pop(symbol, None)
+    status = _symbol_data.get(symbol, {})
+    status["ws_connected"] = False
 
 
 # ---------------------------------------------------------------------------
 # REST helpers
 # ---------------------------------------------------------------------------
 
-def _set_status(error: str = "") -> None:
-    age = (
-        time.time() - _live_price_at
-        if _live_price_at
-        else None
-    )
-
-    stale = not _live_fresh()
-
-    feed_status.update(
-        {
-            "provider_id": "binance-futures",
-            "provider_label": "Binance Futures BTCUSDT",
-            "symbol": SYMBOL,
-            "display_symbol": DISPLAY_SYMBOL,
-            "kind": "futures",
-            "degraded": False,
-            "is_proxy": False,
-            "note": (
-                "Live Binance Futures BTCUSDT "
-                "market data."
-            ),
-            "last_error": (
-                error
-                or feed_status.get(
-                    "last_error",
-                    "",
-                )
-            ),
-            "stale": stale,
-            "tick_age_seconds": (
-                round(age, 1)
-                if age is not None
-                else None
-            ),
-            "live_source": (
-                "websocket"
-                if _live_fresh()
-                else "rest"
-            ),
-        }
-    )
+def _set_status(symbol: str, error: str = "") -> None:
+    _init_symbol(symbol)
+    age = time.time() - _live_price_at[symbol] if _live_price_at.get(symbol) else None
+    stale = not _live_fresh(symbol)
+    
+    status = _symbol_data[symbol]
+    status["stale"] = stale
+    status["tick_age_seconds"] = round(age, 1) if age is not None else None
+    if error:
+        status["last_error"] = error
 
 
-async def _rest_get(
-    path: str,
-    params: Dict[str, Any],
-) -> Any:
-    response = await _http().get(
-        f"{REST_BASE}{path}",
-        params=params,
-    )
-
+async def _rest_get(url: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    response = await _http().get(url, params=params or {})
     response.raise_for_status()
-
     return response.json()
 
 
 # ---------------------------------------------------------------------------
-# Candles
+# Candles - Multi-Provider
 # ---------------------------------------------------------------------------
 
-def _parse_klines(
-    raw: List[List[Any]],
-) -> List[Dict[str, Any]]:
-    candles: List[Dict[str, Any]] = []
-
-    for k in raw:
-        candles.append(
-            {
-                "time": int(k[0]),
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5]),
-                "close_time": int(k[6]),
-            }
-        )
-
-    return candles
-
-
 async def get_klines(
+    symbol: str,
     interval: str,
     limit: int = 300,
 ) -> List[Dict[str, Any]]:
-    """Return historical candles plus the live forming candle."""
-
+    """Get candles for a specific symbol from its provider"""
+    symbol = symbol or DEFAULT_SYMBOL
+    _init_symbol(symbol)
+    
     if interval not in INTERVAL_MINUTES:
         interval = "15m"
-
-    key = f"{interval}:{limit}"
-
-    cached = _kline_cache.get(key)
-
-    if (
-        cached
-        and (
-            time.time() - cached[0]
-        ) < KLINE_TTL
-    ):
-        candles = list(cached[1])
-
-    else:
-        try:
-            raw = await _rest_get(
-                "/klines",
-                {
-                    "symbol": SYMBOL,
-                    "interval": interval,
-                    "limit": limit,
-                },
-            )
-
-            candles = _parse_klines(raw)
-
-            _kline_cache[key] = (
-                time.time(),
-                candles,
-            )
-
-            _set_status()
-
-        except Exception as exc:
-            feed_status["last_error"] = (
-                f"klines {interval}: {exc}"
-            )
-
-            candles = (
-                list(cached[1])
-                if cached
-                else []
-            )
-
-    # Add/replace live forming candle.
-    live = _live_candles.get(interval)
-
-    if (
-        live
-        and _live_fresh()
-    ):
-        if (
-            candles
-            and candles[-1]["time"]
-            == live["time"]
-        ):
-            candles[-1] = dict(live)
-
-        elif (
-            not candles
-            or live["time"] > candles[-1]["time"]
-        ):
-            candles.append(dict(live))
-
-    return candles[-limit:]
-
-
-# ---------------------------------------------------------------------------
-# Live price
-# ---------------------------------------------------------------------------
-
-async def get_price() -> Optional[float]:
-    """Return live BTC price with REST fallback."""
-
-    if _live_fresh():
-        age = time.time() - _live_price_at
-
-        feed_status["tick_age_seconds"] = round(
-            age,
-            1,
-        )
-
-        feed_status["stale"] = False
-
-        return _live_price
-
-    cached = _price_cache.get("last")
-
-    if (
-        cached
-        and (
-            time.time() - cached[0]
-        ) < PRICE_TTL
-    ):
-        return cached[1]
-
+    
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    provider = info.get("provider", "coinbase")
+    
+    cache_key = f"{symbol}:{interval}:{limit}"
+    cached = _kline_cache.get(cache_key)
+    
+    if cached and (time.time() - cached[0]) < KLINE_TTL:
+        return list(cached[1])
+    
     try:
-        data = await _rest_get(
-            "/ticker/price",
-            {
-                "symbol": SYMBOL,
-            },
-        )
-
-        price = float(data["price"])
-
-        _update_live_price(
-            price,
-            "rest",
-        )
-
-        _set_status()
-
-        return price
-
+        if provider == "coinbase":
+            candles = await _get_coinbase_klines(symbol, interval, limit, info)
+        elif provider == "bybit":
+            candles = await _get_bybit_klines(symbol, interval, limit, info)
+        else:
+            return []
+        
+        _kline_cache[cache_key] = (time.time(), candles)
+        _set_status(symbol)
+        return candles[-limit:]
+        
     except Exception as exc:
-        feed_status["last_error"] = (
-            f"price: {exc}"
-        )
+        _set_status(symbol, f"klines {interval}: {exc}")
+        return list(cached[1]) if cached else []
 
-        candles = await get_klines(
-            "1m",
-            2,
-        )
 
+async def _get_coinbase_klines(symbol: str, interval: str, limit: int, info: Dict) -> List[Dict]:
+    """Fetch candles from Coinbase"""
+    product_id = info.get("product_id", f"{symbol}-USD")
+    granularity = info["granularity_map"].get(interval, "FIFTEEN_MINUTE")
+    granularity_seconds = info["granularity_seconds"].get(interval, 900)
+    rest_base = info.get("rest_base", "https://api.coinbase.com/api/v3")
+    
+    now = int(time.time())
+    start = now - (limit * granularity_seconds)
+    
+    params = {
+        "granularity": granularity,
+        "start": start,
+        "end": now,
+    }
+    
+    candles_endpoint = f"{rest_base}{info['candles_path']}"
+    raw = await _rest_get(candles_endpoint, params)
+    
+    result = raw.get("candles", [])
+    candles = []
+    for c in result:
+        candles.append({
+            "time": int(c["start"]),
+            "open": float(c["open"]),
+            "high": float(c["high"]),
+            "low": float(c["low"]),
+            "close": float(c["close"]),
+            "volume": float(c["volume"]),
+            "close_time": int(c["start"]) + granularity_seconds,
+        })
+    candles.reverse()
+    return candles
+
+
+async def _get_bybit_klines(symbol: str, interval: str, limit: int, info: Dict) -> List[Dict]:
+    """Fetch candles from Bybit"""
+    product_id = info.get("product_id", "XAUUSDT")
+    granularity = info["granularity_map"].get(interval, "1")
+    granularity_seconds = info["granularity_seconds"].get(interval, 60)
+    rest_base = info.get("rest_base", "https://api.bybit.com/v5")
+    category = info.get("category", "spot")
+    
+    params = {
+        "category": category,
+        "symbol": product_id,
+        "interval": granularity,
+        "limit": limit,
+    }
+    
+    raw = await _rest_get(f"{rest_base}{info['candles_path']}", params)
+    
+    if raw.get("retCode") != 0:
+        return []
+    
+    candles = []
+    for k in raw.get("result", {}).get("list", []):
+        candles.append({
+            "time": int(k[0]),
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+            "close_time": int(k[0]) + granularity_seconds,
+        })
+    candles.reverse()
+    return candles
+
+
+# ---------------------------------------------------------------------------
+# Price - Multi-Provider
+# ---------------------------------------------------------------------------
+
+async def get_price(symbol: str = None) -> Optional[float]:
+    """Get price for a specific symbol"""
+    symbol = symbol or DEFAULT_SYMBOL
+    _init_symbol(symbol)
+    
+    if _live_fresh(symbol):
+        return _live_price[symbol]
+    
+    cached = _price_cache.get(symbol)
+    if cached and (time.time() - cached[0]) < PRICE_TTL:
+        return cached[1]
+    
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    provider = info.get("provider", "coinbase")
+    
+    try:
+        if provider == "coinbase":
+            price = await _get_coinbase_price(symbol, info)
+        elif provider == "bybit":
+            price = await _get_bybit_price(symbol, info)
+        else:
+            return None
+        
+        if price and price > 0:
+            _update_live_price(symbol, price, "rest")
+            _set_status(symbol)
+            return price
+        return None
+        
+    except Exception as exc:
+        _set_status(symbol, f"price: {exc}")
+        candles = await get_klines(symbol, "1m", 2)
         if candles:
             return candles[-1]["close"]
-
         if cached:
             return cached[1]
-
         return None
 
 
+async def _get_coinbase_price(symbol: str, info: Dict) -> Optional[float]:
+    """Fetch price from Coinbase"""
+    product_id = info.get("product_id", f"{symbol}-USD")
+    rest_base = info.get("rest_base", "https://api.coinbase.com/api/v3")
+    
+    endpoint = f"{rest_base}{info['price_path']}"
+    data = await _rest_get(endpoint)
+    trades = data.get("trades", [])
+    if trades and len(trades) > 0:
+        return float(trades[0].get("price", 0))
+    return None
+
+
+async def _get_bybit_price(symbol: str, info: Dict) -> Optional[float]:
+    """Fetch price from Bybit"""
+    product_id = info.get("product_id", "XAUUSDT")
+    rest_base = info.get("rest_base", "https://api.bybit.com/v5")
+    category = info.get("category", "spot")
+    
+    params = {
+        "category": category,
+        "symbol": product_id,
+    }
+    
+    data = await _rest_get(f"{rest_base}{info['price_path']}", params)
+    
+    if data.get("retCode") != 0:
+        return None
+    
+    tickers = data.get("result", {}).get("list", [])
+    if tickers:
+        return float(tickers[0].get("lastPrice", 0))
+    return None
+
+
 # ---------------------------------------------------------------------------
-# 24h ticker statistics
+# Stats - Multi-Provider
 # ---------------------------------------------------------------------------
 
-async def get_stats_24h() -> Dict[str, float]:
-    """Return BTC 24-hour ticker statistics."""
-
+async def get_stats_24h(symbol: str = None) -> Dict[str, float]:
+    """Get 24h stats for a specific symbol"""
+    symbol = symbol or DEFAULT_SYMBOL
+    info = SUPPORTED_SYMBOLS.get(symbol, {})
+    provider = info.get("provider", "coinbase")
+    
     try:
-        data = await _rest_get(
-            "/ticker/24hr",
-            {
-                "symbol": SYMBOL,
-            },
-        )
-
-        return {
-            "open_24h": float(
-                data["openPrice"]
-            ),
-            "high_24h": float(
-                data["highPrice"]
-            ),
-            "low_24h": float(
-                data["lowPrice"]
-            ),
-            "volume_24h": float(
-                data["volume"]
-            ),
-            "change_24h": float(
-                data["priceChange"]
-            ),
-            "change_pct_24h": float(
-                data["priceChangePercent"]
-            ),
-        }
-
+        if provider == "coinbase":
+            return await _get_coinbase_stats(symbol, info)
+        elif provider == "bybit":
+            return await _get_bybit_stats(symbol, info)
+        return {}
+        
     except Exception as exc:
-        feed_status["last_error"] = (
-            f"24h stats: {exc}"
-        )
+        _set_status(symbol, f"stats: {exc}")
+        return {}
 
-        # Fallback from candles.
-        candles = await get_klines(
-            "1h",
-            25,
-        )
 
-        if not candles:
-            return {}
-
+async def _get_coinbase_stats(symbol: str, info: Dict) -> Dict[str, float]:
+    """Fetch stats from Coinbase"""
+    product_id = info.get("product_id", f"{symbol}-USD")
+    rest_base = info.get("rest_base", "https://api.coinbase.com/api/v3")
+    
+    endpoint = f"{rest_base}{info['stats_path']}"
+    data = await _rest_get(endpoint)
+    product = data.get("product", {})
+    
+    candles = await get_klines(symbol, "1h", 25)
+    if candles:
         first_open = candles[0]["open"]
         last_close = candles[-1]["close"]
-
+        high = max(c["high"] for c in candles)
+        low = min(c["low"] for c in candles)
+        volume = sum(c["volume"] for c in candles)
+        
         return {
             "open_24h": first_open,
-            "high_24h": max(
-                c["high"]
-                for c in candles
-            ),
-            "low_24h": min(
-                c["low"]
-                for c in candles
-            ),
-            "volume_24h": sum(
-                c["volume"]
-                for c in candles
-            ),
-            "change_24h": (
-                last_close - first_open
-            ),
-            "change_pct_24h": (
-                (
-                    last_close - first_open
-                )
-                / first_open
-                * 100
-                if first_open
-                else 0.0
-            ),
+            "high_24h": high,
+            "low_24h": low,
+            "volume_24h": volume,
+            "change_24h": last_close - first_open,
+            "change_pct_24h": ((last_close - first_open) / first_open * 100) if first_open else 0.0,
         }
-
-
-# ---------------------------------------------------------------------------
-# WebSocket health
-# ---------------------------------------------------------------------------
-
-def websocket_health() -> Dict[str, Any]:
+    
     return {
-        "running": bool(
-            _ws_task
-            and not _ws_task.done()
-        ),
-        "connected": bool(
-            feed_status.get(
-                "ws_connected"
-            )
-        ),
-        "provider_id": "binance-futures",
-        "last_price": (
-            _live_price
-            if _live_fresh()
-            else None
-        ),
-        "tick_age_seconds": (
-            round(
-                time.time()
-                - _live_price_at,
-                1,
-            )
-            if _live_price_at
-            else None
-        ),
-        "reconnects": feed_status.get(
-            "ws_reconnects",
-            0,
-        ),
-        "error": feed_status.get(
-            "last_error",
-            "",
-        ),
+        "open_24h": float(product.get("open", 0)),
+        "high_24h": float(product.get("high", 0)),
+        "low_24h": float(product.get("low", 0)),
+        "volume_24h": float(product.get("volume", 0)),
+        "change_24h": float(product.get("price_percentage_change_24h", 0)) / 100,
+        "change_pct_24h": float(product.get("price_percentage_change_24h", 0)),
     }
+
+
+async def _get_bybit_stats(symbol: str, info: Dict) -> Dict[str, float]:
+    """Fetch stats from Bybit"""
+    product_id = info.get("product_id", "XAUUSDT")
+    rest_base = info.get("rest_base", "https://api.bybit.com/v5")
+    category = info.get("category", "spot")
+    
+    params = {
+        "category": category,
+        "symbol": product_id,
+    }
+    
+    data = await _rest_get(f"{rest_base}{info['stats_path']}", params)
+    
+    if data.get("retCode") != 0:
+        return {}
+    
+    tickers = data.get("result", {}).get("list", [])
+    if not tickers:
+        return {}
+    
+    ticker = tickers[0]
+    return {
+        "open_24h": float(ticker.get("prevPrice24h", 0)),
+        "high_24h": float(ticker.get("highPrice24h", 0)),
+        "low_24h": float(ticker.get("lowPrice24h", 0)),
+        "volume_24h": float(ticker.get("volume24h", 0)),
+        "change_24h": float(ticker.get("price24hPcnt", 0)) * 100,
+        "change_pct_24h": float(ticker.get("price24hPcnt", 0)) * 100,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Provider Info
+# ---------------------------------------------------------------------------
+
+async def active_provider(symbol: str = None) -> Dict[str, Any]:
+    """Get active provider info"""
+    symbol = symbol or DEFAULT_SYMBOL
+    return {
+        "provider_id": get_provider(symbol),
+        "provider_label": f"{get_provider(symbol).title()} {get_display_symbol(symbol)}",
+        "symbol": symbol,
+        "display_symbol": get_display_symbol(symbol),
+        "kind": "spot",
+        "status": "active",
+        "reachable": True,
+        "last_check": time.time(),
+    }
+
+
+async def test_rest(symbol: str = None) -> Dict[str, Any]:
+    """Test REST API connectivity"""
+    symbol = symbol or DEFAULT_SYMBOL
+    try:
+        price = await get_price(symbol)
+        return {
+            "status": "ok",
+            "provider": get_provider(symbol),
+            "symbol": symbol,
+            "price": price,
+            "timestamp": time.time(),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "provider": get_provider(symbol),
+            "symbol": symbol,
+            "error": str(exc),
+            "timestamp": time.time(),
+        }
 
 
 # ---------------------------------------------------------------------------
 # Backward compatibility
 # ---------------------------------------------------------------------------
 
+SYMBOL = DEFAULT_SYMBOL
+DISPLAY_SYMBOL = get_display_symbol(SYMBOL)
+
+feed_status = get_feed_status(SYMBOL)
+
+
 def start_websocket() -> None:
-    asyncio.create_task(
-        start_feed()
-    )
+    """Start WebSocket for default symbol (backward compatibility)"""
+    asyncio.create_task(start_feed(DEFAULT_SYMBOL))

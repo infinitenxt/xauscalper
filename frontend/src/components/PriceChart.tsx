@@ -280,7 +280,7 @@ export default function PriceChart({
   const data: Point[] = rows.map(
     (c, index) => ({
       label: new Date(
-        c.time,
+        c.time * 1000,  // ✅ Coinbase returns seconds
       ).toLocaleTimeString(
         "en-GB",
         {
@@ -428,6 +428,47 @@ export default function PriceChart({
   const chartSymbol =
     symbol || "BTCUSDT";
 
+  // ✅ Loading state
+  if (loading) {
+    return (
+      <section className="col-span-12 flex min-h-[520px] flex-col rounded-md border border-slate-800 bg-[#111827] p-4 lg:col-span-8">
+        <div className="flex h-[420px] items-center justify-center">
+          <div className="text-center">
+            <div className="mb-3 inline-block h-8 w-8 animate-spin rounded-full border-4 border-amber-500 border-t-transparent"></div>
+            <p className="text-sm text-slate-400">Loading candles...</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ✅ Empty state
+  if (!candles || candles.length === 0 || data.length === 0) {
+    return (
+      <section className="col-span-12 flex min-h-[520px] flex-col rounded-md border border-slate-800 bg-[#111827] p-4 lg:col-span-8">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">
+              {chartSymbol} · <span className="text-amber-400">{timeframe}</span>
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              Live {chartSymbol} candles · EMA9 / EMA21 / EMA50 / EMA200 / VWAP / Bollinger
+            </p>
+          </div>
+        </div>
+        <div className="flex h-[420px] flex-col items-center justify-center rounded border border-dashed border-slate-800 text-center">
+          <p className="text-sm text-slate-400">
+            {loading ? "Loading market candles…" : "No candle data available"}
+          </p>
+          <p className="max-w-sm text-[11px] text-slate-600">
+            {loading ? "Fetching data from Coinbase…" : "Try selecting a different timeframe or symbol."}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  // ✅ Full chart
   return (
     <section
       className="col-span-12 flex min-h-[520px] flex-col rounded-md border border-slate-800 bg-[#111827] p-4 lg:col-span-8"
@@ -446,7 +487,7 @@ export default function PriceChart({
           </h2>
 
           <p className="text-[11px] text-slate-500">
-            Live BTC candles · EMA9 / EMA21 /
+            Live {chartSymbol} candles · EMA9 / EMA21 /
             EMA50 / EMA200 / VWAP / Bollinger
           </p>
         </div>
@@ -507,327 +548,304 @@ export default function PriceChart({
       </div>
 
       <div className="min-h-[420px] flex-1">
-        {data.length === 0 ? (
-          <div
-            className="flex h-[420px] flex-col items-center justify-center gap-2 rounded border border-dashed border-slate-800 text-center"
-            data-testid="chart-empty-state"
+        <ResponsiveContainer
+          width="100%"
+          height={440}
+        >
+          <ComposedChart
+            data={data}
+            margin={{
+              top: 8,
+              right: 72,
+              left: 4,
+              bottom: 4,
+            }}
           >
-            <p className="text-sm text-slate-400">
-              {loading
-                ? "Loading BTC market candles…"
-                : "BTC market candles unavailable right now."}
-            </p>
+            <CartesianGrid
+              stroke="#1e293b"
+              strokeDasharray="2 4"
+              vertical={false}
+            />
 
-            <p className="max-w-sm text-[11px] text-slate-600">
-              The live BTC price is available,
-              but historical candles have not
-              arrived yet.
-            </p>
-          </div>
-        ) : (
-          <ResponsiveContainer
-            width="100%"
-            height={440}
-          >
-            <ComposedChart
-              data={data}
-              margin={{
-                top: 8,
-                right: 72,
-                left: 4,
-                bottom: 4,
+            <XAxis
+              dataKey="label"
+              tick={{
+                fill: "#64748b",
+                fontSize: 10,
               }}
-            >
-              <CartesianGrid
-                stroke="#1e293b"
-                strokeDasharray="2 4"
-                vertical={false}
-              />
+              stroke="#1e293b"
+              minTickGap={40}
+            />
 
-              <XAxis
-                dataKey="label"
-                tick={{
-                  fill: "#64748b",
-                  fontSize: 10,
-                }}
-                stroke="#1e293b"
-                minTickGap={40}
-              />
+            <YAxis
+              type="number"
+              domain={[
+                domainMin,
+                domainMax,
+              ]}
+              orientation="right"
+              tick={{
+                fill: "#94a3b8",
+                fontSize: 10,
+              }}
+              stroke="#1e293b"
+              tickFormatter={(value: number) =>
+                value.toLocaleString(
+                  "en-US",
+                  {
+                    maximumFractionDigits: 2,
+                  },
+                )
+              }
+              width={72}
+              allowDataOverflow={false}
+            />
 
-              <YAxis
-                type="number"
-                domain={[
-                  domainMin,
-                  domainMax,
-                ]}
-                orientation="right"
-                tick={{
-                  fill: "#94a3b8",
-                  fontSize: 10,
-                }}
-                stroke="#1e293b"
-                tickFormatter={(
-                  value: number,
-                ) =>
-                  value.toLocaleString(
-                    "en-US",
-                    {
-                      maximumFractionDigits: 2,
-                    },
-                  )
-                }
-                width={72}
-                allowDataOverflow={false}
-              />
-
-              <Tooltip
-                contentStyle={{
-                  background:
-                    "rgba(2,6,23,0.94)",
-                  border:
-                    "1px solid #1e293b",
-                  borderRadius: 6,
-                  fontSize: 11,
-                }}
-                labelStyle={{
-                  color: "#94a3b8",
-                }}
-                formatter={(
-                  value: unknown,
-                  name: unknown,
-                ) => {
-                  if (
-                    Array.isArray(value)
-                  ) {
-                    return [
-                      `${fmt(
-                        Number(value[0]),
-                      )} – ${fmt(
-                        Number(value[1]),
-                      )}`,
-                      "Low–High",
-                    ];
-                  }
-
+            <Tooltip
+              contentStyle={{
+                background:
+                  "rgba(2,6,23,0.94)",
+                border:
+                  "1px solid #1e293b",
+                borderRadius: 6,
+                fontSize: 11,
+              }}
+              labelStyle={{
+                color: "#94a3b8",
+              }}
+              formatter={(
+                value: unknown,
+                name: unknown,
+              ) => {
+                if (
+                  Array.isArray(value)
+                ) {
                   return [
-                    fmt(
-                      typeof value ===
-                        "number"
-                        ? value
-                        : null,
-                    ),
-                    String(
-                      name ?? "",
-                    ),
+                    `${fmt(
+                      Number(value[0]),
+                    )} – ${fmt(
+                      Number(value[1]),
+                    )}`,
+                    "Low–High",
                   ];
+                }
+
+                return [
+                  fmt(
+                    typeof value ===
+                      "number"
+                      ? value
+                      : null,
+                  ),
+                  String(
+                    name ?? "",
+                  ),
+                ];
+              }}
+            />
+
+            <Line
+              dataKey="bbUpper"
+              stroke="#334155"
+              dot={false}
+              strokeWidth={1}
+              name="BB Upper"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Line
+              dataKey="bbLower"
+              stroke="#334155"
+              dot={false}
+              strokeWidth={1}
+              name="BB Lower"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Bar
+              dataKey="range"
+              shape={<CandleShape />}
+              isAnimationActive={false}
+              name="OHLC"
+              barCategoryGap="15%"
+            />
+
+            <Line
+              dataKey="ema9"
+              stroke="#38f8c8"
+              dot={false}
+              strokeWidth={1.2}
+              name="EMA9"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Line
+              dataKey="ema21"
+              stroke="#eab308"
+              dot={false}
+              strokeWidth={1.4}
+              name="EMA21"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Line
+              dataKey="ema50"
+              stroke="#a78bfa"
+              dot={false}
+              strokeWidth={1.4}
+              name="EMA50"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Line
+              dataKey="ema200"
+              stroke="#fb923c"
+              dot={false}
+              strokeWidth={1.2}
+              name="EMA200"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            <Line
+              dataKey="vwap"
+              stroke="#64748b"
+              dot={false}
+              strokeWidth={1.2}
+              strokeDasharray="4 3"
+              name="VWAP"
+              connectNulls
+              isAnimationActive={false}
+            />
+
+            {breakEven !== null && (
+              <ReferenceLine
+                y={breakEven}
+                stroke="#22d3ee"
+                strokeWidth={1}
+                strokeDasharray="2 3"
+                ifOverflow="extendDomain"
+                label={{
+                  value: `BE ${fmt(
+                    breakEven,
+                  )}`,
+                  position: "left",
+                  fill: "#22d3ee",
+                  fontSize: 9,
                 }}
               />
+            )}
 
-              <Line
-                dataKey="bbUpper"
-                stroke="#334155"
-                dot={false}
+            {trailing !== null && (
+              <ReferenceLine
+                y={trailing}
+                stroke="#fbbf24"
                 strokeWidth={1}
-                name="BB Upper"
-                connectNulls
-                isAnimationActive={false}
+                strokeDasharray="5 3"
+                ifOverflow="extendDomain"
+                label={{
+                  value: `TRAIL ${fmt(
+                    trailing,
+                  )}`,
+                  position: "left",
+                  fill: "#fbbf24",
+                  fontSize: 9,
+                }}
               />
+            )}
 
-              <Line
-                dataKey="bbLower"
-                stroke="#334155"
-                dot={false}
-                strokeWidth={1}
-                name="BB Lower"
-                connectNulls
-                isAnimationActive={false}
+            {entry !== null && (
+              <ReferenceLine
+                y={entry}
+                stroke="#38bdf8"
+                strokeWidth={1.4}
+                ifOverflow="extendDomain"
+                label={{
+                  value: `ENTRY ${fmt(
+                    entry,
+                  )}`,
+                  position: "left",
+                  fill: "#38bdf8",
+                  fontSize: 10,
+                }}
               />
+            )}
 
-              <Bar
-                dataKey="range"
-                shape={
-                  <CandleShape />
+            {sl !== null && (
+              <ReferenceLine
+                y={sl}
+                stroke="#f43f5e"
+                strokeWidth={1.4}
+                strokeDasharray={
+                  planned
+                    ? "5 4"
+                    : undefined
                 }
-                isAnimationActive={false}
-                name="OHLC"
-                barCategoryGap="15%"
+                ifOverflow="extendDomain"
+                label={{
+                  value: `SL ${fmt(sl)}`,
+                  position: "left",
+                  fill: "#f43f5e",
+                  fontSize: 10,
+                }}
               />
+            )}
 
-              <Line
-                dataKey="ema9"
-                stroke="#38f8c8"
-                dot={false}
-                strokeWidth={1.2}
-                name="EMA9"
-                connectNulls
-                isAnimationActive={false}
-              />
-
-              <Line
-                dataKey="ema21"
-                stroke="#eab308"
-                dot={false}
+            {tp !== null && (
+              <ReferenceLine
+                y={tp}
+                stroke="#10b981"
                 strokeWidth={1.4}
-                name="EMA21"
-                connectNulls
-                isAnimationActive={false}
+                strokeDasharray={
+                  planned
+                    ? "5 4"
+                    : undefined
+                }
+                ifOverflow="extendDomain"
+                label={{
+                  value: `TP ${fmt(tp)}`,
+                  position: "left",
+                  fill: "#10b981",
+                  fontSize: 10,
+                }}
               />
+            )}
 
-              <Line
-                dataKey="ema50"
-                stroke="#a78bfa"
-                dot={false}
-                strokeWidth={1.4}
-                name="EMA50"
-                connectNulls
-                isAnimationActive={false}
-              />
-
-              <Line
-                dataKey="ema200"
-                stroke="#fb923c"
-                dot={false}
-                strokeWidth={1.2}
-                name="EMA200"
-                connectNulls
-                isAnimationActive={false}
-              />
-
-              <Line
-                dataKey="vwap"
-                stroke="#64748b"
-                dot={false}
-                strokeWidth={1.2}
-                strokeDasharray="4 3"
-                name="VWAP"
-                connectNulls
-                isAnimationActive={false}
-              />
-
-              {breakEven !== null && (
+            {live !== null &&
+              live !== undefined && (
                 <ReferenceLine
-                  y={breakEven}
-                  stroke="#22d3ee"
-                  strokeWidth={1}
+                  y={live}
+                  stroke={
+                    liveUp
+                      ? "#34d399"
+                      : "#fb7185"
+                  }
+                  strokeWidth={1.2}
                   strokeDasharray="2 3"
                   ifOverflow="extendDomain"
                   label={{
-                    value: `BE ${fmt(
-                      breakEven,
+                    value: `● ${live.toLocaleString(
+                      "en-US",
+                      {
+                        maximumFractionDigits: 2,
+                      },
                     )}`,
-                    position: "left",
-                    fill: "#22d3ee",
-                    fontSize: 9,
+                    position: "right",
+                    fill: liveUp
+                      ? "#34d399"
+                      : "#fb7185",
+                    fontSize: 11,
+                    fontWeight: 700,
                   }}
                 />
               )}
-
-              {trailing !== null && (
-                <ReferenceLine
-                  y={trailing}
-                  stroke="#fbbf24"
-                  strokeWidth={1}
-                  strokeDasharray="5 3"
-                  ifOverflow="extendDomain"
-                  label={{
-                    value: `TRAIL ${fmt(
-                      trailing,
-                    )}`,
-                    position: "left",
-                    fill: "#fbbf24",
-                    fontSize: 9,
-                  }}
-                />
-              )}
-
-              {entry !== null && (
-                <ReferenceLine
-                  y={entry}
-                  stroke="#38bdf8"
-                  strokeWidth={1.4}
-                  ifOverflow="extendDomain"
-                  label={{
-                    value: `ENTRY ${fmt(
-                      entry,
-                    )}`,
-                    position: "left",
-                    fill: "#38bdf8",
-                    fontSize: 10,
-                  }}
-                />
-              )}
-
-              {sl !== null && (
-                <ReferenceLine
-                  y={sl}
-                  stroke="#f43f5e"
-                  strokeWidth={1.4}
-                  strokeDasharray={
-                    planned
-                      ? "5 4"
-                      : undefined
-                  }
-                  ifOverflow="extendDomain"
-                  label={{
-                    value: `SL ${fmt(sl)}`,
-                    position: "left",
-                    fill: "#f43f5e",
-                    fontSize: 10,
-                  }}
-                />
-              )}
-
-              {tp !== null && (
-                <ReferenceLine
-                  y={tp}
-                  stroke="#10b981"
-                  strokeWidth={1.4}
-                  strokeDasharray={
-                    planned
-                      ? "5 4"
-                      : undefined
-                  }
-                  ifOverflow="extendDomain"
-                  label={{
-                    value: `TP ${fmt(tp)}`,
-                    position: "left",
-                    fill: "#10b981",
-                    fontSize: 10,
-                  }}
-                />
-              )}
-
-              {live !== null &&
-                live !== undefined && (
-                  <ReferenceLine
-                    y={live}
-                    stroke={
-                      liveUp
-                        ? "#34d399"
-                        : "#fb7185"
-                    }
-                    strokeWidth={1.2}
-                    strokeDasharray="2 3"
-                    ifOverflow="extendDomain"
-                    label={{
-                      value: `● ${live.toLocaleString(
-                        "en-US",
-                        {
-                          maximumFractionDigits: 2,
-                        },
-                      )}`,
-                      position: "right",
-                      fill: liveUp
-                        ? "#34d399"
-                        : "#fb7185",
-                      fontSize: 11,
-                      fontWeight: 700,
-                    }}
-                  />
-                )}
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
 
       {planned &&

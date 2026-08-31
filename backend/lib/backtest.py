@@ -151,7 +151,7 @@ def run(
     losses = [t for t in trades if t["pnl"] < 0]
     total = len(trades)
     if total == 0:
-        out = _empty("No setup in this window cleared every gate — that is normal for a quiet stretch of gold.")
+        out = _empty("No setup in this window cleared every gate — that is normal for a quiet stretch of bitcoin.")
         out["equity_curve"] = curve
         out["bars_tested"] = n - WARMUP
         out["timeframe"] = timeframe
@@ -191,5 +191,5 @@ def run(
         "exit_reasons": reasons, "session_breakdown": breakdown,
         "best_session": best["session"] if best else "", "worst_session": worst["session"] if worst else "",
         "equity_curve": curve, "trade_list": trades[-40:],
-        "note": "Simulation on real gold candles using the live rules. Entries fill at the signal bar close and a bar covering both levels is scored as a stop. Past behaviour is not a prediction.",
+        "note": "Simulation on real bitcoin candles using the live rules. Entries fill at the signal bar close and a bar covering both levels is scored as a stop. Past behaviour is not a prediction.",
     }

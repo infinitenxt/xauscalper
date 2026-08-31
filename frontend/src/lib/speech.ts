@@ -1,7 +1,7 @@
 // Browser text-to-speech via the Web Speech API. No API key, no network calls.
 // A tiny queue keeps announcements in order instead of cutting each other off.
 
-const KEY = "gold-terminal-speech";
+const KEY = "bitcoin-terminal-speech";
 
 export const speechSupported = (): boolean =>
   typeof window !== "undefined" && "speechSynthesis" in window;

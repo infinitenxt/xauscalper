@@ -77,7 +77,7 @@ export default function Mt5() {
       if (!ready || !window.Razorpay) { toast.error("Could not load Razorpay checkout."); return; }
       new window.Razorpay({
         key: order.key_id, amount: order.amount, currency: order.currency,
-        name: "Gold Paper Terminal", description: `${order.plan.name} · ${order.plan.days} days`,
+        name: "Bitcoin Paper Terminal", description: `${order.plan.name} · ${order.plan.days} days`,
         order_id: order.order_id, prefill: { email: me?.email ?? "", name: me?.username ?? "" },
         theme: { color: "#eab308" },
         handler: (response) => verify.mutate({ plan_id: order.plan.id, ...response }),
@@ -90,12 +90,13 @@ export default function Mt5() {
   const current = account.data;
   const entitlement = billing.data?.mt5_live_entitlement;
   const plan = billing.data?.mt5_live_plan;
+  
   return (
     <div className="min-h-screen bg-[#0b0e14] p-4">
       <Toaster position="bottom-right" richColors />
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-800 bg-[#111827] p-4">
-          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private BTC/USD-only execution · one bot position · separate MT5 subscription</p></div>
+          <div><h1 className="flex items-center gap-2 text-lg font-semibold text-slate-100" data-testid="mt5-page-title"><ServerCog className="size-5 text-amber-400" /> MT5 execution bridge</h1><p className="text-[11px] text-slate-500">Private BTC/USDT-only execution · one bot position · separate MT5 subscription</p></div>
           <Button variant="outline" size="sm" onClick={() => navigate("/")} data-testid="mt5-back-button" className="border-slate-700 text-slate-300"><ArrowLeft className="size-3.5" /> Terminal</Button>
         </header>
 
@@ -107,7 +108,7 @@ export default function Mt5() {
           <form className="rounded-md border border-slate-800 bg-[#111827] p-4" onSubmit={(e) => { e.preventDefault(); connect.mutate(); }} data-testid="mt5-connect-form">
             <h2 className="text-sm font-semibold text-slate-100">Connect your private MT5 account</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div><Label className="text-[11px] text-slate-300">Account mode</Label><Select value={form.mode} onValueChange={(value) => setForm((v) => ({ ...v, mode: value }))}><SelectTrigger className="mt-1" data-testid="mt5-mode-select"><SelectValue>{(value) => value === "live" ? "Live account" : "Demo account"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="demo">Demo account</SelectItem><SelectItem value="live">Live account</SelectItem></SelectContent></Select></div>
+              <div><Label className="text-[11px] text-slate-300">Account mode</Label><Select value={form.mode} onValueChange={(value) => setForm((v) => ({ ...v, mode: value }))}><SelectTrigger className="mt-1" data-testid="mt5-mode-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="demo">Demo account</SelectItem><SelectItem value="live">Live account</SelectItem></SelectContent></Select></div>
               <div><Label htmlFor="mt5-login" className="text-[11px] text-slate-300">MT5 account login</Label><Input id="mt5-login" required value={form.account_login} onChange={(e) => setForm((v) => ({ ...v, account_login: e.target.value }))} data-testid="mt5-login-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
               <div><Label htmlFor="mt5-server" className="text-[11px] text-slate-300">Exact broker server</Label><Input id="mt5-server" required value={form.broker_server} onChange={(e) => setForm((v) => ({ ...v, broker_server: e.target.value }))} placeholder="Broker-Demo" data-testid="mt5-server-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
               <div><Label htmlFor="mt5-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-lot" type="number" min="0.001" step="0.001" required value={form.lot_size} onChange={(e) => setForm((v) => ({ ...v, lot_size: Number(e.target.value) }))} data-testid="mt5-lot-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
@@ -127,9 +128,63 @@ export default function Mt5() {
           </>
         )}
 
-        {token ? <section className="rounded-md border border-sky-900/50 bg-sky-950/15 p-4" data-testid="mt5-one-time-token"><h2 className="text-sm font-semibold text-sky-200">One-time EA setup credentials</h2><p className="mt-1 text-[11px] text-slate-400">Copy these now. The token is stored only as a hash and cannot be shown again.</p>{[["Bridge URL", token.url],["Bridge token", token.value]].map(([label, value]) => <div key={label} className="mt-2"><p className="text-[9px] uppercase text-slate-500">{label}</p><div className="flex gap-2"><code className="min-w-0 flex-1 truncate rounded bg-slate-950 px-2 py-1.5 text-[11px] text-slate-200" data-testid={`mt5-${label.toLowerCase().replace(" ", "-")}`}>{value}</code><Button size="sm" variant="outline" onClick={() => void navigator.clipboard.writeText(value)} className="border-slate-700"><Copy className="size-3.5" /></Button></div></div>)}<ol className="mt-3 list-decimal space-y-1 pl-4 text-[11px] text-slate-400">{token.steps.map((step) => <li key={step}>{step}</li>)}</ol><a href="/GoldTerminalBridge.mq5" download className="mt-3 inline-flex items-center gap-2 rounded bg-amber-500 px-3 py-2 text-[11px] font-semibold text-slate-950" data-testid="download-mt5-ea-link"><Download className="size-4" /> Download MT5 EA</a></section> : null}
+        {token ? (
+          <section className="rounded-md border border-sky-900/50 bg-sky-950/15 p-4" data-testid="mt5-one-time-token">
+            <h2 className="text-sm font-semibold text-sky-200">One-time EA setup credentials</h2>
+            <p className="mt-1 text-[11px] text-slate-400">Copy these now. The token is stored only as a hash and cannot be shown again.</p>
+            {[["Bridge URL", token.url],["Bridge token", token.value]].map(([label, value]) => (
+              <div key={label} className="mt-2">
+                <p className="text-[9px] uppercase text-slate-500">{label}</p>
+                <div className="flex gap-2">
+                  <code className="min-w-0 flex-1 truncate rounded bg-slate-950 px-2 py-1.5 text-[11px] text-slate-200" data-testid={`mt5-${label.toLowerCase().replace(" ", "-")}`}>{value}</code>
+                  <Button size="sm" variant="outline" onClick={() => void navigator.clipboard.writeText(value)} className="border-slate-700"><Copy className="size-3.5" /></Button>
+                </div>
+              </div>
+            ))}
+            <ol className="mt-3 list-decimal space-y-1 pl-4 text-[11px] text-slate-400">
+              {token.steps.map((step) => <li key={step}>{step}</li>)}
+            </ol>
+            {/* ✅ FIXED: Download link with backend route */}
+            <a 
+              href="/api/download/bridge-ea" 
+              download
+              className="mt-3 inline-flex items-center gap-2 rounded bg-amber-500 px-3 py-2 text-[11px] font-semibold text-slate-950 hover:bg-amber-400 transition-colors"
+              data-testid="download-mt5-ea-link"
+            >
+              <Download className="size-4" />
+              Download MT5 EA
+            </a>
+          </section>
+        ) : null}
 
-        <section className="rounded-md border border-slate-800 bg-[#111827] p-4" data-testid="mt5-command-history"><h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100"><Activity className="size-4 text-amber-400" /> Execution history</h2>{(commands.data ?? []).length ? <Table><TableHeader><TableRow className="border-slate-800 hover:bg-transparent">{["Action", "Side", "Lots", "Status", "Reason", "Broker"].map((heading) => <TableHead key={heading} className="h-8 text-[10px] uppercase text-slate-500">{heading}</TableHead>)}</TableRow></TableHeader><TableBody>{(commands.data ?? []).map((command) => <TableRow key={command.id} className="border-slate-800 text-[11px]" data-testid="mt5-command-row"><TableCell>{command.action}</TableCell><TableCell>{command.direction || "—"}</TableCell><TableCell>{command.lots || "—"}</TableCell><TableCell>{command.status}</TableCell><TableCell className="max-w-xs truncate">{command.reason || "—"}</TableCell><TableCell>{command.broker_ticket || command.broker_message || "—"}</TableCell></TableRow>)}</TableBody></Table> : <p className="text-[11px] text-slate-500" data-testid="mt5-commands-empty">No MT5 execution commands yet.</p>}</section>
+        <section className="rounded-md border border-slate-800 bg-[#111827] p-4" data-testid="mt5-command-history">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100"><Activity className="size-4 text-amber-400" /> Execution history</h2>
+          {(commands.data ?? []).length ? (
+            <Table>
+              <TableHeader>
+                <TableRow className="border-slate-800 hover:bg-transparent">
+                  {["Action", "Side", "Lots", "Status", "Reason", "Broker"].map((heading) => (
+                    <TableHead key={heading} className="h-8 text-[10px] uppercase text-slate-500">{heading}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(commands.data ?? []).map((command) => (
+                  <TableRow key={command.id} className="border-slate-800 text-[11px]" data-testid="mt5-command-row">
+                    <TableCell>{command.action}</TableCell>
+                    <TableCell>{command.direction || "—"}</TableCell>
+                    <TableCell>{command.lots || "—"}</TableCell>
+                    <TableCell>{command.status}</TableCell>
+                    <TableCell className="max-w-xs truncate">{command.reason || "—"}</TableCell>
+                    <TableCell>{command.broker_ticket || command.broker_message || "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-[11px] text-slate-500" data-testid="mt5-commands-empty">No MT5 execution commands yet.</p>
+          )}
+        </section>
       </div>
     </div>
   );

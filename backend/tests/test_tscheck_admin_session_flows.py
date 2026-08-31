@@ -16,7 +16,7 @@ worker (loadscope) and lets them run in a safe, deterministic order:
 9. test_9_presence_lapses_but_engine_keeps_running - presence lapse (must run
    last-among-the-original-6: it needs a >30s window with NO /dashboard or
    /presence calls, so nothing else here should touch presence afterwards)
-10. test_10_feed_provider_is_binance_futures_www_not_paxg - consistent gold source
+10. test_10_feed_provider_is_binance_spot_www_not_paxg - consistent bitcoin source
 11. test_11_candles_symbol_matches_ticker_price_all_timeframes - all timeframes work
 12. test_12_live_price_never_stale_and_moves               - live price never stale
 13. test_13_signal_indicators_breakout_and_mtf              - indicator + MTF payload
@@ -110,7 +110,7 @@ def test_3_new_admin_credentials_work():
         assert body["user"]["username"] == "Admin", body["user"]
         assert body["user"]["role"] == "admin", body["user"]
 
-        old = c.post("/auth/login", json={"email": "admin@goldterminal.app", "password": ADMIN_PASSWORD})
+        old = c.post("/auth/login", json={"email": "admin@bitcointerminal.app", "password": ADMIN_PASSWORD})
         assert old.status_code == 401, f"POST /auth/login (old admin) -> expected 401, got {old.status_code}: {old.text[:300]}"
 
 

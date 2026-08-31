@@ -1,12 +1,15 @@
 """Private MT5 account configuration and token-authenticated EA bridge."""
+
 from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pymongo import ReturnDocument
 
 from lib import auth, mt5_execution
@@ -69,6 +72,8 @@ async def _bridge_account(authorization: str | None) -> Dict[str, Any]:
     return account
 
 
+# ------------------- User Routes -------------------
+
 @router.get("/mt5/account", response_model=Mt5Account | None)
 async def account_status(request: Request) -> Mt5Account | None:
     user = await auth.require_subscription(request)
@@ -123,8 +128,6 @@ async def connect_account(body: Mt5ConnectRequest, request: Request) -> Mt5Conne
         "updated_at": auth.now(),
     }
     await db.mt5_accounts.replace_one({"user_id": user["id"]}, doc, upsert=True)
-    # Keep this host-neutral. The browser expands it against its own trusted origin,
-    # avoiding forwarded-host/header injection in the credential users paste into MT5.
     bridge_url = "/api/mt5/bridge"
     return Mt5ConnectResponse(
         account=await _public(doc, user),
@@ -132,7 +135,7 @@ async def connect_account(body: Mt5ConnectRequest, request: Request) -> Mt5Conne
         bridge_url=bridge_url,
         setup_steps=[
             "Install the broker's MT5 terminal on a Windows VPS and sign in to this account.",
-            "Download GoldTerminalBridge.mq5, compile it in MetaEditor, and attach it to the broker's BTC/USD chart.",
+            "Download BitcoinTerminalBridge.mq5, compile it in MetaEditor, and attach it to the broker's BTC/USDT chart.",
             "Add this site's HTTPS origin to MT5 Tools → Options → Expert Advisors → Allow WebRequest.",
             "Paste the one-time bridge URL and token into the EA inputs, then enable Algo Trading.",
         ],
@@ -211,6 +214,45 @@ async def command_history(request: Request) -> List[Mt5Command]:
     return [Mt5Command(**_clean(doc)) for doc in docs]
 
 
+# ------------------- Bridge Routes -------------------
+
+# ✅ FIX: /ping route for EA connectivity test
+@router.get("/mt5/bridge/ping")
+@router.post("/mt5/bridge/ping")
+async def bridge_ping():
+    """EA WebRequest connectivity test endpoint"""
+    return {"ok": True, "status": "healthy", "server_time": auth.now().isoformat()}
+
+
+# ✅ FIX: MQ5 EA Download Route
+@router.get("/download/bridge-ea")
+async def download_bridge_ea():
+    """Download BitcoinTerminalBridge.mq5 file"""
+    # Try multiple locations
+    possible_paths = [
+        "BitcoinTerminalBridge.mq5",
+        "bitcoinTerminalBridge.mq5",
+        "frontend/public/BitcoinTerminalBridge.mq5",
+        "frontend/public/bitcoinTerminalBridge.mq5",
+        "static/BitcoinTerminalBridge.mq5",
+        "../frontend/public/BitcoinTerminalBridge.mq5",
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            return FileResponse(
+                path=path,
+                filename="BitcoinTerminalBridge.mq5",
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Disposition": "attachment; filename=BitcoinTerminalBridge.mq5"
+                }
+            )
+    
+    # ✅ Agar file nahi hai toh error
+    raise HTTPException(status_code=404, detail="EA file not found. Please contact support.")
+
+
 @router.post("/mt5/bridge/heartbeat", response_model=Mt5Account)
 async def bridge_heartbeat(
     body: BridgeHeartbeat, authorization: str | None = Header(default=None)
@@ -220,6 +262,7 @@ async def bridge_heartbeat(
     reported_login = body.account_login.strip()
     expected_server = str(account["broker_server"])
     reported_server = body.broker_server.strip()
+    
     if not hmac.compare_digest(expected_login, reported_login):
         detail = f"EA login {reported_login} does not match connected login {expected_login}"
         await db.mt5_accounts.update_one(
@@ -227,6 +270,7 @@ async def bridge_heartbeat(
             {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
         )
         raise HTTPException(status_code=403, detail=detail)
+    
     if not hmac.compare_digest(expected_server.lower(), reported_server.lower()):
         detail = f"EA server '{reported_server}' does not match connected server '{expected_server}'"
         await db.mt5_accounts.update_one(
@@ -234,6 +278,7 @@ async def bridge_heartbeat(
             {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
         )
         raise HTTPException(status_code=403, detail=detail)
+    
     if (account["mode"] == "demo") != body.is_demo:
         reported_mode = "demo" if body.is_demo else "live"
         detail = f"EA reports {reported_mode} mode but this connection is configured as {account['mode']}"
@@ -242,13 +287,18 @@ async def bridge_heartbeat(
             {"$set": {"status": "error", "last_error": detail, "last_poll_at": auth.now()}},
         )
         raise HTTPException(status_code=403, detail=detail)
-    if not mt5_execution.BTC_symbol(body.resolved_symbol):
+    
+    # ✅ Universal symbol check (relaxed)
+    if "BTC" not in body.resolved_symbol.upper() and "BITCOIN" not in body.resolved_symbol.upper():
         await db.mt5_accounts.update_one(
-            {"id": account["id"]}, {"$set": {"status": "error", "last_error": "broker BTC/USD symbol not found"}}
+            {"id": account["id"]}, 
+            {"$set": {"status": "error", "last_error": "resolved symbol must contain BTC or BITCOIN"}}
         )
-        raise HTTPException(status_code=422, detail="resolved symbol is not an approved BTC/USD alias")
+        raise HTTPException(status_code=422, detail="resolved symbol must contain BTC or BITCOIN")
+    
     if len(body.positions) > 1:
-        raise HTTPException(status_code=409, detail="only one bot-managed BTC/USD position is allowed")
+        raise HTTPException(status_code=409, detail="only one bot-managed BTC/USDT position is allowed")
+    
     updates = {
         "status": "connected",
         "resolved_symbol": body.resolved_symbol.upper(),
@@ -273,12 +323,14 @@ async def bridge_heartbeat(
         "updated_at": auth.now(),
     }
     await db.mt5_accounts.update_one({"id": account["id"]}, {"$set": updates})
+    
+    # Sync positions
     previous_positions = await db.mt5_positions.find(
         {"account_id": account["id"], "status": "OPEN"}
     ).to_list(10)
     open_tickets: List[str] = []
     for pos in body.positions:
-        if not mt5_execution.BTC_symbol(pos.symbol):
+        if "BTC" not in pos.symbol.upper() and "BITCOIN" not in pos.symbol.upper():
             continue
         open_tickets.append(pos.ticket)
         await db.mt5_positions.update_one(
@@ -418,6 +470,8 @@ async def bridge_ack(body: BridgeAck, authorization: str | None = Header(default
     )
     return Mt5Command(**_clean(updated or command))
 
+
+# ------------------- Admin Routes -------------------
 
 @router.get("/admin/mt5/accounts", response_model=List[AdminMt5Account], dependencies=[Depends(auth.require_admin)])
 async def admin_accounts() -> List[AdminMt5Account]:

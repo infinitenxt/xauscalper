@@ -24,7 +24,7 @@ MODEL_NAME = "gpt-5.4"
 TIMEOUT_SECONDS = 25.0
 
 SYSTEM_MESSAGE = (
-    "You are the desk analyst for an educational gold (BTCUSDT) scalping bot. "
+    "You are the desk analyst for an educational bitcoin (BTCUSDT) scalping bot. "
     "You are handed the exact technical facts behind a paper trade that was just opened. "
     "Write a tight explanation of why this trade was taken, in 3 to 4 sentences, "
     "in plain confident trading-desk English.\n\n"
@@ -59,7 +59,7 @@ def _prompt(facts: Dict[str, Any]) -> str:
         f"Confluence confidence: {facts.get('confidence')}% "
         f"(bull {facts.get('bull_score')} vs bear {facts.get('bear_score')})",
         f"ATR: {facts.get('atr')}",
-        f"Position: {facts.get('qty')} oz, risking {facts.get('risk_amount')} USD",
+        f"Position: {facts.get('qty')} oz, risking {facts.get('risk_amount')} USDT",
         "",
         "Confirmations that agreed with the direction:",
     ]

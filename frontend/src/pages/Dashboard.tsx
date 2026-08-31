@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Check, HandCoins, Info, LogOut, ServerCog, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -46,9 +47,7 @@ import { cn } from "@/lib/utils";
 
 function analysisScript(signal: Signal): string[] {
   const lines = [
-    `${signal.direction} signal on the ${signal.timeframe} timeframe with ${signal.confidence.toFixed(
-      0,
-    )} percent confidence.`,
+    `${signal.direction} signal on the ${signal.timeframe} timeframe with ${signal.confidence.toFixed(0)} percent confidence.`,
     signal.summary,
   ];
   signal.confirmations.forEach((c) => lines.push(`${c.name} is ${c.direction}. ${c.detail}`));
@@ -59,6 +58,7 @@ function analysisScript(signal: Signal): string[] {
 
 export default function Dashboard() {
   const [timeframe, setTimeframe] = useState("1m");
+  const [symbol, setSymbol] = useState("BTCUSDT");
   const [speechOn, setSpeech] = useState(false);
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -67,16 +67,18 @@ export default function Dashboard() {
 
   useEffect(() => setSpeech(isSpeechOn()), []);
 
+  // ✅ Dashboard query with symbol
   const dash = useQuery({
-    queryKey: ["dashboard", timeframe],
-    queryFn: () => apiGet<DashboardData>(`/dashboard?timeframe=${timeframe}`),
+    queryKey: ["dashboard", timeframe, symbol],
+    queryFn: () => apiGet<DashboardData>(`/dashboard?timeframe=${timeframe}&symbol=${symbol}`),
     refetchInterval: 3000,
     retry: false,
   });
 
+  // ✅ Candles query with symbol
   const candles = useQuery({
-    queryKey: ["candles", timeframe],
-    queryFn: () => apiGet<CandlesResponse>(`/market/candles?timeframe=${timeframe}&limit=160`),
+    queryKey: ["candles", timeframe, symbol],
+    queryFn: () => apiGet<CandlesResponse>(`/market/candles?symbol=${symbol}&timeframe=${timeframe}&limit=160`),
     refetchInterval: 5000,
     retry: false,
   });
@@ -91,9 +93,20 @@ export default function Dashboard() {
   const data = dash.isError ? undefined : dash.data;
   const present = data?.guards.present ?? false;
 
-  // Presence heartbeat: the engine only opens NEW trades for users seen recently.
-  // Polling /dashboard already refreshes it, but background tabs get throttled, so
-  // ping explicitly while the tab is visible and let presence lapse when it is not.
+  // ✅ Load saved symbol from settings
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiGet("/settings"),
+    enabled: !!me,
+  });
+
+  useEffect(() => {
+    if (settings?.symbol) {
+      setSymbol(settings.symbol);
+    }
+  }, [settings]);
+
+  // Presence heartbeat
   useEffect(() => {
     const ping = () => {
       if (document.visibilityState === "visible") {
@@ -225,8 +238,7 @@ export default function Dashboard() {
 
   // ---- rolling market commentary, spoken every 5 seconds ------------------
   const [lastComment, setLastComment] = useState("");
-  const atrPct =
-    signal?.atr && signal.price ? (signal.atr / signal.price) * 100 : undefined;
+  const atrPct = signal?.atr && signal.price ? (signal.atr / signal.price) * 100 : undefined;
   const moodInput = useRef<MoodInput>({
     direction: undefined,
     confidence: 0,
@@ -251,7 +263,6 @@ export default function Dashboard() {
       const comment = nextComment(pickMood(moodInput.current));
       if (!comment) return;
       setLastComment(comment);
-      // Never talk over an announcement or another comment.
       if (isSpeechOn() && !isSpeaking()) speak(comment);
     };
     tick();
@@ -297,6 +308,8 @@ export default function Dashboard() {
           resetting={reset.isPending}
           live={live}
           autoTradeOn={data?.config.auto_trade_enabled ?? true}
+          symbol={symbol}
+          onSymbolChange={setSymbol}
           settingsSlot={
             <SettingsPanel
               config={data?.config}
@@ -385,7 +398,7 @@ export default function Dashboard() {
           }
         />
 
-        <SessionBar sessions={data?.sessions} filterOn={data?.config.session_filter_enabled ?? true} />
+       
 
         <ActivePositionPanel
           trade={data?.open_trade}
@@ -412,7 +425,7 @@ export default function Dashboard() {
           openTrade={data?.open_trade}
           livePrice={data?.ticker.price}
           loading={candles.isLoading}
-          symbol={data?.feed.display_symbol ?? data?.feed.symbol}
+          symbol={symbol}
         />
 
         <SignalPanel
@@ -488,7 +501,7 @@ export default function Dashboard() {
             <Info className="mt-0.5 size-3.5 shrink-0" />
             <span data-testid="disclaimer">
               {data?.config.disclaimer ??
-                "Educational paper trading only. No real orders are placed and no signal is a guarantee — gold can move against any confirmed setup."}
+                "Educational paper trading only. No real orders are placed and no signal is a guarantee — price can move against any confirmed setup."}
             </span>
           </p>
         </section>

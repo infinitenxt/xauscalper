@@ -25,6 +25,7 @@ from pymongo.errors import DuplicateKeyError
 
 from lib import auth, settings as settings_mod
 from lib.db import db
+from lib import market  # ✅ For DEFAULT_SYMBOL
 
 BRIDGE_STALE_SECONDS = 45
 ENTRY_TTL_SECONDS = 30
@@ -38,21 +39,41 @@ def connected(account: Dict[str, Any]) -> bool:
     )
 
 
+# ✅ Universal BTC symbol detection (with XAU support)
 def BTC_symbol(symbol: str) -> bool:
+    """Check if symbol is BTC-related or XAU-related (Universal)"""
+    if not symbol:
+        return False
+    
     value = symbol.upper().replace("/", "").strip()
-
-    if value in ("BTCUSD", "GOLD"):
+    
+    # ✅ Universal patterns (BTC + XAU)
+    patterns = [
+        "BTCUSD", "BTCUSDT", "XBTUSD", 
+        "BTCUSDP", "XBTUSDT", "BTC",
+        "BITCOIN",
+        "XAUUSD", "GOLD", "XAUUSDP",
+        "XAUEUR", "XAU",
+    ]
+    
+    # Exact match
+    for pattern in patterns:
+        if value == pattern:
+            return True
+    
+    # Contains BTC and USD
+    if "BTC" in value and ("USD" in value or "USDT" in value):
+        if "GBTC" not in value and "EBTC" not in value:
+            return True
+    
+    # Contains XAU and USD
+    if "XAU" in value and "USD" in value:
         return True
-
-    for root in ("BTCUSD", "GOLD"):
-        if value.startswith(root):
-            suffix = value[len(root):]
-            return (
-                0 < len(suffix) <= 7
-                and suffix[0] in "._-"
-                and suffix[1:].isalnum()
-            )
-
+    
+    # Contains GOLD
+    if "GOLD" in value:
+        return True
+    
     return False
 
 
@@ -279,10 +300,6 @@ async def process_cycle(
 
     for account in accounts:
 
-        # ---------------------------------------------------------------
-        # IMPORTANT:
-        # Load settings belonging to this MT5 account owner.
-        # ---------------------------------------------------------------
         user_id = str(account["user_id"])
 
         try:
@@ -291,15 +308,10 @@ async def process_cycle(
                 refresh=True,
             )
         except Exception:
-            # Keep cycle alive if one user's settings cannot be loaded.
-            # Fall back to the supplied config only for this account.
             user_cfg = cfg or await settings_mod.get_defaults(
                 refresh=True
             )
 
-        # ---------------------------------------------------------------
-        # Existing MT5 position management uses owner's settings.
-        # ---------------------------------------------------------------
         position = await db.mt5_positions.find_one(
             {
                 "account_id": account["id"],
@@ -442,10 +454,6 @@ async def process_cycle(
             )
             continue
 
-        # ---------------------------------------------------------------
-        # IMPORTANT:
-        # This is now the USER'S kill switch, not a global setting.
-        # ---------------------------------------------------------------
         if not bool(
             user_cfg.get(
                 "auto_trade_enabled",
@@ -459,27 +467,17 @@ async def process_cycle(
             )
             continue
 
-        if not BTC_symbol(
-            str(
-                account.get(
-                    "resolved_symbol"
-                ) or ""
-            )
-        ):
+        # ✅ Universal symbol check (BTC + XAU)
+        resolved_symbol = str(account.get("resolved_symbol") or "")
+        if not BTC_symbol(resolved_symbol):
             await _entry_status(
                 account,
                 "blocked",
-                (
-                    "The broker gold symbol is not an "
-                    "approved BTCUSD/GOLD alias"
-                ),
+                f"The broker symbol '{resolved_symbol}' is not supported",
             )
             continue
 
-        valid_lot, lot_reason = lot_valid(
-            account
-        )
-
+        valid_lot, lot_reason = lot_valid(account)
         if not valid_lot:
             await _entry_status(
                 account,
@@ -488,9 +486,7 @@ async def process_cycle(
             )
             continue
 
-        if float(
-            account.get("free_margin") or 0.0
-        ) <= 0:
+        if float(account.get("free_margin") or 0.0) <= 0:
             await _entry_status(
                 account,
                 "blocked",
@@ -511,9 +507,7 @@ async def process_cycle(
                 {
                     "$set": {
                         "auto_trade_enabled": False,
-                        "last_error": (
-                            "normal or MT5 subscription inactive"
-                        ),
+                        "last_error": "normal or MT5 subscription inactive",
                     }
                 },
             )
@@ -521,10 +515,7 @@ async def process_cycle(
             await _entry_status(
                 account,
                 "blocked",
-                (
-                    "Both the normal and MT5 Auto-Trading "
-                    "subscriptions must be active"
-                ),
+                "Both the normal and MT5 Auto-Trading subscriptions must be active",
             )
             continue
 
@@ -546,16 +537,11 @@ async def process_cycle(
             await _entry_status(
                 account,
                 "queued",
-                (
-                    "An MT5 entry command is awaiting "
-                    "broker confirmation"
-                ),
+                "An MT5 entry command is awaiting broker confirmation",
             )
             continue
 
-        # ---------------------------------------------------------------
-        # Queue ENTRY using this user's settings.
-        # ---------------------------------------------------------------
+        # ✅ Queue ENTRY using this user's settings.
         await _queue_entry(
             account,
             signal,

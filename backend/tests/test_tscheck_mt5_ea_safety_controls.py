@@ -1,7 +1,7 @@
 """EA file contains restart-safe and duplicate-safe controls.
 
 A real Windows MT5 terminal / MetaEditor compiler is unavailable in this
-Linux environment, so GoldTerminalBridge.mq5 is verified statically for the
+Linux environment, so bitcoinTerminalBridge.mq5 is verified statically for the
 required safeguards: command expiry checks, a persistent account-scoped
 command journal, broker retcode validation, opened_at reporting, and
 management-state reconstruction from the broker's own position time.
@@ -10,7 +10,7 @@ management-state reconstruction from the broker's own position time.
 import os
 
 EA_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "frontend", "public", "GoldTerminalBridge.mq5"
+    os.path.dirname(__file__), "..", "..", "frontend", "public", "bitcoinTerminalBridge.mq5"
 )
 
 

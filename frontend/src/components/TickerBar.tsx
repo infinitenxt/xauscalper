@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Activity, Circle, Coins, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TIMEFRAMES, fmt, money } from "@/lib/types";
 import type { FeedStatus, Ticker } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,8 @@ interface Props {
   resetting: boolean;
   live: boolean;
   autoTradeOn: boolean;
+  symbol: string;              // ✅ NEW
+  onSymbolChange: (symbol: string) => void;  // ✅ NEW
   settingsSlot: ReactNode;
   userSlot: ReactNode;
 }
@@ -32,6 +35,8 @@ export default function TickerBar({
   resetting,
   live,
   autoTradeOn,
+  symbol,           // ✅ NEW
+  onSymbolChange,   // ✅ NEW
   settingsSlot,
   userSlot,
 }: Props) {
@@ -59,6 +64,19 @@ export default function TickerBar({
       data-testid="ticker-bar"
     >
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3">
+        {/* ✅ Symbol Selector */}
+        <div className="flex items-center gap-3">
+          <Select value={symbol} onValueChange={onSymbolChange}>
+            <SelectTrigger className="w-[120px] border-slate-700 bg-slate-950 text-slate-100">
+              <SelectValue placeholder="Symbol" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="BTCUSDT">BTC/USD</SelectItem>
+              <SelectItem value="XAUUSD">XAU/USD</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded border border-amber-500/30 bg-amber-500/10">
             <Coins className="size-5 text-amber-400" />
@@ -76,7 +94,7 @@ export default function TickerBar({
               </span>
             </div>
             <span className="text-[11px] text-slate-500" data-testid="ticker-market-description">
-              {feed?.is_proxy ? "Gold proxy / USDT · Binance" : "Gold / USDT · Binance"}
+              {feed?.is_proxy ? "BTC / USDT · Baybit" : "bitcoin / USDT · Baybit"}
             </span>
           </div>
         </div>
@@ -179,9 +197,9 @@ export default function TickerBar({
               <span
                 className="rounded bg-amber-950 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-300"
                 data-testid="feed-proxy-badge"
-                title="Not BTC/USD — PAXGUSDT gold proxy data"
+                title="Not BTC/USDT — PAXGUSDT bitcoin proxy data"
               >
-                gold proxy
+                bitcoin proxy
               </span>
             ) : null}
           </div>

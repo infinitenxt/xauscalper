@@ -1,7 +1,7 @@
 """Heartbeat enforces exact account and broker safety binding.
 
-Matching login/server/demo-mode with an BTCUSD/GOLD/short-suffix alias is
-accepted; wrong login, wrong server, wrong mode, and non-gold symbols are
+Matching login/server/demo-mode with an BTCUSDT/bitcoin/short-suffix alias is
+accepted; wrong login, wrong server, wrong mode, and non-bitcoin symbols are
 rejected. A successful heartbeat also records EA version and (via a broker
 position) opened_at.
 """
@@ -29,7 +29,7 @@ def _connect(user_client):
 def _heartbeat(user_client, token, **overrides):
     body = {
         "account_login": "9988", "broker_server": "Tscheck-Broker", "is_demo": True,
-        "resolved_symbol": "BTCUSD", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
+        "resolved_symbol": "BTCUSDT", "ea_version": "1.10", "positions": [], **HEARTBEAT_BASE,
     }
     body.update(overrides)
     return user_client.post(
@@ -52,19 +52,19 @@ def test_heartbeat_binding_and_symbol_allowlist(client, backend_url):
         wrong_mode = _heartbeat(user_client, token, is_demo=False)
         assert wrong_mode.status_code == 403, f"wrong demo/live mode should be rejected, got {wrong_mode.status_code} {wrong_mode.text[:300]}"
 
-        non_gold = _heartbeat(user_client, token, resolved_symbol="EURUSD")
-        assert non_gold.status_code == 422, f"non-gold symbol should be rejected, got {non_gold.status_code} {non_gold.text[:300]}"
+        non_bitcoin = _heartbeat(user_client, token, resolved_symbol="EURUSDT")
+        assert non_bitcoin.status_code == 422, f"non-bitcoin symbol should be rejected, got {non_bitcoin.status_code} {non_bitcoin.text[:300]}"
 
-        # gold alias with a short broker suffix is accepted
-        alias_ok = _heartbeat(user_client, token, resolved_symbol="BTCUSD.a")
-        assert alias_ok.status_code == 200, f"gold alias should be accepted, got {alias_ok.status_code} {alias_ok.text[:300]}"
+        # bitcoin alias with a short broker suffix is accepted
+        alias_ok = _heartbeat(user_client, token, resolved_symbol="BTCUSDT.a")
+        assert alias_ok.status_code == 200, f"bitcoin alias should be accepted, got {alias_ok.status_code} {alias_ok.text[:300]}"
         assert alias_ok.json()["ea_version"] == "1.10"
 
         opened = datetime.now(timezone.utc).isoformat()
         with_position = _heartbeat(
-            user_client, token, resolved_symbol="GOLD",
+            user_client, token, resolved_symbol="bitcoin",
             positions=[{
-                "ticket": "700001", "symbol": "GOLD", "direction": "BUY", "volume": 0.01,
+                "ticket": "700001", "symbol": "bitcoin", "direction": "BUY", "volume": 0.01,
                 "entry_price": 2400.0, "current_price": 2401.0, "sl": 2390.0, "tp": 2420.0,
                 "profit": 1.0, "opened_at": opened,
             }],

@@ -445,12 +445,12 @@ def _decorate_open(
 
 
 # -------------------------------------------------------------------------
-# open trade (with symbol)
+# open trade
 # -------------------------------------------------------------------------
 
 async def open_trade(
     user_id: str,
-    symbol: str,  # ✅ NEW
+    symbol: str,
     signal: Dict[str, Any],
     price: float,
     cfg: Dict[str, Any],
@@ -557,7 +557,7 @@ async def open_trade(
             f"paper balance "
             f"(${risk_amount:,.2f}) "
             f"over a {sl_dist:.2f} stop distance "
-            f"→ {qty:.4f} {symbol} "
+            f"→ {qty:.4f} oz "
             f"(${notional:,.2f} notional)."
         ),
         (
@@ -603,7 +603,7 @@ async def open_trade(
     trade = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "symbol": symbol,  # ✅ Store symbol
+        "symbol": symbol,
         "direction": direction,
         "status": "OPEN",
         "timeframe": signal["timeframe"],
@@ -2151,7 +2151,7 @@ async def cycle() -> None:
 
                 trade = await open_trade(
                     user_id=user_id,
-                    symbol=symbol,  # ✅ Pass symbol
+                    symbol=symbol,
                     signal=user_signal,
                     price=user_price,
                     cfg=user_cfg,
@@ -2375,7 +2375,7 @@ async def config(
 async def dashboard(
     user_id: str,
     timeframe: str,
-    symbol: str = None,  # ✅ NEW
+    symbol: str = None,
 ) -> Dict[str, Any]:
 
     await touch_presence(
@@ -2387,7 +2387,6 @@ async def dashboard(
         refresh=True,
     )
 
-    # ✅ Use provided symbol or default
     symbol = symbol or market.DEFAULT_SYMBOL
 
     signal = await get_signal(

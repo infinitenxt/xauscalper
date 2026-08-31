@@ -18,7 +18,7 @@ ADMIN_EMAIL = "admin@infinitenxt.com"
 ADMIN_USERNAME = "Admin"
 ADMIN_PASSWORD = "Harsh@10576"
 # Older builds seeded these — migrated in-place to the values above.
-LEGACY_ADMIN_EMAILS = ["admin@goldterminal.app"]
+LEGACY_ADMIN_EMAILS = ["admin@bitcointerminal.app"]
 LEGACY_ADMIN_USERNAMES = ["admin"]
 
 PLANS: List[Dict[str, Any]] = [
@@ -75,7 +75,7 @@ PLANS: List[Dict[str, Any]] = [
         "days": 30,
         "features": [
             "Demo and live MT5 account execution",
-            "BTC/USD-only safety allowlist",
+            "BTC/USDT-only safety allowlist",
             "Confidence-triggered automatic entries",
             "EA-managed SL, TP, break-even, partials, trailing and autocut",
         ],
@@ -87,9 +87,9 @@ PLANS: List[Dict[str, Any]] = [
 
 SITE: Dict[str, Any] = {
     "id": "main",
-    "site_name": "Gold Paper Terminal",
+    "site_name": "Bitcoin Paper Terminal",
     "tagline": "Educational BTCUSDT scalping intelligence",
-    "support_email": "support@goldterminal.app",
+    "support_email": "support@bitcointerminal.app",
     "allow_registration": True,
     "invite_mode_enabled": True,
     "maintenance_mode": False,
@@ -151,7 +151,7 @@ async def run() -> None:
                 "name": "MT5 Auto-Trading",
                 "features": [
                     "Demo and live MT5 account execution",
-                    "BTC/USD-only safety allowlist",
+                    "BTC/USDT-only safety allowlist",
                     "Confidence-triggered automatic entries",
                     "EA-managed SL, TP, break-even, partials, trailing and autocut",
                 ],

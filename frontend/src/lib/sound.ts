@@ -1,7 +1,7 @@
 // Short WebAudio alert tones. No audio files, no network. Browsers require a
 // user gesture before audio plays, so unlock() is called from the first click.
 
-const KEY = "gold-terminal-sound";
+const KEY = "bitcoin-terminal-sound";
 
 let ctx: AudioContext | null = null;
 

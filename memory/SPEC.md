@@ -1,8 +1,8 @@
-# Gold Paper Terminal — BTCUSDT educational paper-trading SCALPER
+# Bitcoin Paper Terminal — BTCUSDT educational paper-trading SCALPER
 
 ## What it is
-Single-page MT5-inspired dark trading terminal for BTCUSDT (gold), tuned for
-**1-minute scalping**. A backend engine polls real Binance gold market data,
+Single-page MT5-inspired dark trading terminal for BTCUSDT (bitcoin), tuned for
+**1-minute scalping**. A backend engine polls real Binance bitcoin market data,
 scores a 12-confirmation confluence signal (BUY / SELL / WAIT + confidence %),
 and auto-opens **virtual** paper trades when confidence ≥ 80%, every entry gate
 passes, and no account circuit breaker is tripped. No real orders, no auth — one
@@ -11,13 +11,13 @@ explanation aloud and plays distinct alert tones on entry / TP / SL.
 
 ## Market data (IMPORTANT deviation)
 `backend/lib/market.py` is a provider chain:
-1. `binance-futures` — `https://fapi.binance.com/fapi/v1`, symbol `BTCUSDT` (primary)
-2. `binance-gold-spot` — `https://data-api.binance.vision/api/v3`, symbol `PAXGUSDT` (fallback)
+1. `binance-spot` — `https://api.bybit.com/v5`, symbol `BTCUSDT` (primary)
+2. `binance-bitcoin-spot` — `https://data-api.binance.vision/api/v3`, symbol `PAXGUSDT` (fallback)
 
-Binance Futures answers **HTTP 451 (restricted location)** from this pod's region,
+Binance spot answers **HTTP 451 (restricted location)** from this pod's region,
 so the chain automatically runs on the fallback: Binance's public spot data mirror
-using PAXGUSDT (1:1 physically-backed gold token, ~same price as spot gold per oz).
-Prices/candles are therefore **real Binance gold data**, just not the futures book.
+using PAXGUSDT (1:1 physically-backed bitcoin token, ~same price as spot bitcoin per oz).
+Prices/candles are therefore **real Binance bitcoin data**, just not the spot book.
 The UI shows the active provider in the ticker bar and a visible amber note when
 degraded. If the app is ever deployed from an unrestricted region, provider 1 is
 picked automatically with no code change. Data is fetched via REST polling (not
@@ -128,7 +128,7 @@ liquidity grade.
 `lib/backtest.py` + `GET /api/backtest?timeframe&days` (subscribers only, cached
 120s, run via `asyncio.to_thread`). Replays the **same** `strategy.analyze` and
 management stack (break-even, partial TP, trailing, time cap) over real Binance
-gold candles. Conservative by design: entries fill at the signal bar's close, and
+bitcoin candles. Conservative by design: entries fill at the signal bar's close, and
 a bar spanning both levels is scored as a **stop**. Returns trades, win rate, net
 P&L, return %, profit factor, avg R, max drawdown, avg hold, exit-reason
 breakdown, an equity curve and the trade list. UI: `components/BacktestPanel.tsx`
@@ -176,7 +176,7 @@ Routes: `/login`, `/register` (`pages/AuthPage.tsx`), `/subscribe`
 Theme: dark by default (`<html class="dark">`), JetBrains Mono Variable.
 
 ## Auth / seed
-Admin seeded each boot: `admin@goldterminal.app` / `Harsh@10576` (see
+Admin seeded each boot: `admin@bitcointerminal.app` / `Harsh@10576` (see
 `memory/test_credentials.md`). Regular users register at `/register` and need a
 subscription — granted by an admin, by a trial-days setting, or via Razorpay.
 `POST /api/engine/reset` wipes trades/signals and restores the $10,000 paper
@@ -189,7 +189,7 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
 - Trades only appear when the live market genuinely produces an 80%+ setup, so
   the history table is legitimately empty on a fresh, quiet market — that is
   correct behaviour, not a bug.
-- The 451 futures fallback and REST-instead-of-WebSocket are intentional
+- The 451 spot fallback and REST-instead-of-WebSocket are intentional
   deviations (see above).
 
 ## Update — per-user wallets, presence, session backtest split
@@ -210,7 +210,7 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
 
 ## Update — admin identity, password changes, invite-only sign-up
 - Seeded admin is now `Admin` / `admin@infinitenxt.com` / `Harsh@10576`
-  (seed.py migrates the legacy `admin@goldterminal.app` doc in place and clears its sessions).
+  (seed.py migrates the legacy `admin@bitcointerminal.app` doc in place and clears its sessions).
 - `POST /api/auth/password` {current_password,new_password}: self-service change, revokes
   other sessions and re-issues the caller's cookie. UI: `ChangePasswordDialog` in the
   dashboard and admin headers (testid `change-password-open-button`).
@@ -227,18 +227,18 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   (right, `lg:col-span-7`). The active-position block was moved out of
   `WalletPanel`, which is now wallet stats only (`wallet`, `config` props).
 
-## Update — consistent BTC/USD feed + scalping engine upgrade
-- **Single gold source.** `lib/market.py` provider chain: `binance-futures`
-  (fapi, BTCUSDT) → `binance-futures-www` (https://www.binance.com/fapi/v1 mirror with a browser
-  UA, same BTCUSDT market — this is what works from this pod, fapi returns 451) →
-  `binance-gold-proxy` (PAXGUSDT, labelled "PAXGUSDT GOLD PROXY (not BTC/USD)", last resort).
+## Update — consistent BTC/USDT feed + scalping engine upgrade
+- **Single bitcoin source.** `lib/market.py` provider chain: `binance-spot`
+  (api, BTCUSDT) → `binance-spot-www` (https://www.binance.com/api/v1 mirror with a browser
+  UA, same BTCUSDT market — this is what works from this pod, api returns 451) →
+  `binance-bitcoin-proxy` (PAXGUSDT, labelled "PAXGUSDT bitcoin PROXY (not BTC/USDT)", last resort).
   REST candles, WS ticks and the forming candle always come from the SAME provider symbol; live
   data is tagged with its provider id and dropped when the provider changes, and a tick older
   than `STALE_AFTER` (15s) is reported stale instead of being shown as live.
-- WebSocket (`fstream`, trade + kline 1m/5m/15m/30m/1h) is rebound to the active provider,
+- WebSocket (`stream`, trade + kline 1m/5m/15m/30m/1h) is rebound to the active provider,
   auto-reconnects with backoff, and `feed_status` exposes display_symbol, is_proxy, live_source,
   ws_connected, ws_reconnects, stale, tick_age_seconds (UI shows "ws live/rest/stale" + a
-  "gold proxy" badge).
+  "bitcoin proxy" badge).
 - Indicators: added EMA21 and `indicators.breakout()` — breakout quality, fake-breakout
   detection, chop via directional efficiency; exposed in the snapshot and Signal (`breakout`).
 - Strategy: MTF now 1m→[1m,5m,15m,30m,1h] and 5m→[5m,15m,30m,1h]; new weighted confirmation
@@ -276,12 +276,12 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   demo or live account through a custom Expert Advisor bridge. The app never stores the MT5 master
   password: it issues a one-time, tenant-scoped bridge token, stores only its SHA-256 hash, and lets
   the EA poll outbound over HTTPS. Disconnecting revokes the token.
-- Initial provider is the downloadable `frontend/public/GoldTerminalBridge.mq5`; MetaApi is a planned
+- Initial provider is the downloadable `frontend/public/bitcoinTerminalBridge.mq5`; MetaApi is a planned
   optional second adapter after the EA rollout is validated. The EA requires the broker's MT5 terminal
   on an always-on Windows VPS, Algo Trading enabled, the app origin added to MT5's WebRequest allowlist,
   and the exact MT5 login/server entered in the web connection form.
-- Only the canonical BTC/USD family is permitted. The bridge accepts exact broker-discovered aliases
-  `BTCUSD`, `GOLD`, and short suffix forms such as `BTCUSD.m`; arbitrary instruments are rejected by
+- Only the canonical BTC/USDT family is permitted. The bridge accepts exact broker-discovered aliases
+  `BTCUSDT`, `bitcoin`, and short suffix forms such as `BTCUSDT.m`; arbitrary instruments are rejected by
   both backend and EA. One bot-managed position may be open per connected account.
 - Users choose a fixed lot with no SaaS/admin cap. Every entry still must satisfy the broker's volume
   min/max/step, full-trading permission, free margin, spread (maximum 15% of ATR), directional SL/TP,
@@ -328,7 +328,7 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
 - MT5 entries now use the configured confidence threshold as the only strategy-quality gate. Session,
   presence, `signal.tradeable`, daily-loss and hourly-count filters remain part of paper trading but no
   longer suppress an MT5 command. Mandatory execution controls still apply: connected/authorized EA,
-  user and global auto-trade switches, entitlement, BTCUSD/GOLD alias, one open position, valid broker
+  user and global auto-trade switches, entitlement, BTCUSDT/bitcoin alias, one open position, valid broker
   lot size, free margin, account trading permission, and directional broker-side SL/TP.
 - Each MT5 account records an `entry_state` and exact `entry_reason` every engine cycle, so a qualified
   signal is visibly waiting, blocked, queued or in-position rather than silently skipped.

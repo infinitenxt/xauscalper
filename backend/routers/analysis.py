@@ -1,4 +1,5 @@
 """Session awareness and strategy backtesting."""
+
 from __future__ import annotations
 
 import asyncio
@@ -58,6 +59,12 @@ async def run_backtest(
         return BacktestResult(**hit[1])
 
     # ---------------------------------------------------------------
+    # Get user's preferred symbol
+    # ---------------------------------------------------------------
+    cfg = await settings_mod.get_settings(user_id, refresh=True)
+    symbol = cfg.get("symbol", market.DEFAULT_SYMBOL)
+
+    # ---------------------------------------------------------------
     # Market history remains shared.
     # ---------------------------------------------------------------
     tf_min = market.INTERVAL_MINUTES[timeframe]
@@ -72,7 +79,9 @@ async def run_backtest(
         min(1500, wanted),
     )
 
+    # ✅ FIXED: symbol first
     candles = await market.get_klines(
+        symbol,  # ✅ Add symbol first
         timeframe,
         limit,
     )
@@ -84,15 +93,6 @@ async def run_backtest(
         )
 
     # ---------------------------------------------------------------
-    # IMPORTANT:
-    # Load THIS USER'S trading settings.
-    # ---------------------------------------------------------------
-    cfg = await settings_mod.get_settings(
-        user_id,
-        refresh=True,
-    )
-
-    # ---------------------------------------------------------------
     # Multi-timeframe market data remains shared.
     # ---------------------------------------------------------------
     mtf: Dict[str, Any] = {}
@@ -102,7 +102,9 @@ async def run_backtest(
         [],
     ):
         if tf != timeframe:
+            # ✅ FIXED: symbol first
             mtf[tf] = await market.get_klines(
+                symbol,  # ✅ Add symbol first
                 tf,
                 400,
             )

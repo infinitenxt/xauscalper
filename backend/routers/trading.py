@@ -1,455 +1,299 @@
-"""Trading API — every route is scoped to the signed-in subscriber's own wallet
-and personal trading settings.
+"""Trading routes — paper trading dashboard, signals, and execution"""
 
-Market data is shared, but wallets, trades, history and strategy settings are
-private to each signed-in subscriber.
+from typing import Optional
+from fastapi import APIRouter, Request, HTTPException, Query
+from datetime import datetime, timezone
 
-Admin/default settings are managed separately and are used only as the starting
-configuration for users who do not yet have personal settings.
-"""
-from __future__ import annotations
-
-from typing import Any, Dict, List
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-
-from lib import auth, engine, market, settings as settings_mod
-from models.trading import (
-    CandlesResponse,
-    Dashboard,
-    EngineConfig,
-    EngineHealth,
-    FeedStatus,
-    Guards,
-    SettingsPatch,
-    Signal,
-    Ticker,
-    Trade,
-    Wallet,
-)
+from lib import auth, paper_trading, market, strategy, settings as settings_mod
+from lib.db import db
 
 router = APIRouter(tags=["trading"])
 
-Sub = Depends(auth.require_subscription)
+
+# =====================================================================
+# HELPERS
+# =====================================================================
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# =====================================================================
+# DASHBOARD (Multi-Symbol)
+# =====================================================================
 
-def _tf(timeframe: str) -> str:
-    if timeframe not in market.INTERVAL_MINUTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unsupported timeframe '{timeframe}'",
-        )
-    return timeframe
-
-
-# ---------------------------------------------------------------------------
-# Market
-# ---------------------------------------------------------------------------
-
-@router.get("/debug/BTC-rest")
-async def debug_BTC_rest(
-    user: Dict[str, Any] = Sub,
+@router.get("/dashboard")
+async def get_dashboard(
+    request: Request,
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD")
 ):
-    from lib.market import test_BTC_rest
-
-    return await test_BTC_rest()
-
-
-@router.get("/market/feed", response_model=FeedStatus)
-async def get_feed(
-    user: Dict[str, Any] = Sub,
-) -> FeedStatus:
-    await market.active_provider()
-
-    return FeedStatus(
-        **{
-            k: v
-            for k, v in market.feed_status.items()
-            if k != "last_update"
-        }
-    )
-
-
-@router.get("/market/ticker", response_model=Ticker)
-async def get_ticker(
-    user: Dict[str, Any] = Sub,
-) -> Ticker:
-    price = await market.get_price()
-    stats = await market.get_stats_24h()
-
-    return Ticker(
-        symbol=market.feed_status.get("symbol") or "BTCUSDT",
-        price=price,
-        **stats,
-    )
-
-
-@router.get("/market/candles", response_model=CandlesResponse)
-async def get_candles(
-    timeframe: str = Query("15m"),
-    limit: int = Query(180, ge=20, le=500),
-    user: Dict[str, Any] = Sub,
-) -> CandlesResponse:
-    tf = _tf(timeframe)
-
-    candles = await market.get_klines(
-        tf,
-        limit,
-    )
-
-    if not candles:
-        raise HTTPException(
-            status_code=503,
-            detail="market data unavailable from all providers",
-        )
-
-    return CandlesResponse(
-        symbol=market.feed_status.get("symbol") or "BTCUSDT",
-        timeframe=tf,
-        provider=market.feed_status.get("provider_label") or "",
-        candles=candles,  # type: ignore[arg-type]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Signals
-# ---------------------------------------------------------------------------
-
-@router.get("/signal", response_model=Signal)
-async def get_signal(
-    timeframe: str = Query("15m"),
-    user: Dict[str, Any] = Sub,
-) -> Signal:
-    return Signal(
-        **await engine.get_signal(
-            _tf(timeframe)
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Wallet
-# ---------------------------------------------------------------------------
-
-@router.get("/wallet", response_model=Wallet)
-async def get_wallet(
-    user: Dict[str, Any] = Sub,
-) -> Wallet:
-    user_id = user["id"]
-
-    open_t = await engine.get_open_trade(
-        user_id
-    )
-
-    price = await market.get_price()
-
-    return Wallet(
-        **await engine.wallet_view(
-            user_id,
-            open_t,
-            price,
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Trades
-# ---------------------------------------------------------------------------
-
-@router.get("/trades", response_model=List[Trade])
-async def get_trades(
-    limit: int = Query(
-        40,
-        ge=1,
-        le=200,
-    ),
-    user: Dict[str, Any] = Sub,
-) -> List[Trade]:
-    return [
-        Trade(**t)
-        for t in await engine.trade_history(
-            user["id"],
-            limit,
-        )
-    ]
-
-
-@router.post(
-    "/trades/{trade_id}/close",
-    response_model=Trade,
-)
-async def close_trade(
-    trade_id: str,
-    user: Dict[str, Any] = Sub,
-) -> Trade:
-    user_id = user["id"]
-
-    open_t = await engine.get_open_trade(
-        user_id
-    )
-
-    if not open_t or open_t["id"] != trade_id:
-        raise HTTPException(
-            status_code=404,
-            detail="no open trade with that id on your account",
-        )
-
-    price = await market.get_price()
-
+    """Get full dashboard data for a specific symbol"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Update presence
+    await paper_trading.touch_presence(user["id"])
+    
+    # ✅ Get user settings
+    cfg = await settings_mod.get_settings(user["id"], refresh=True)
+    
+    # ✅ Get market data for symbol
+    price = await market.get_price(symbol)
     if not price:
-        raise HTTPException(
-            status_code=503,
-            detail="no live price available to close against",
-        )
-
-    closed = await engine.close_trade(
-        open_t,
-        price,
-        "MANUAL CLOSE",
-        (
-            f"Closed manually from the dashboard at "
-            f"{price:.2f}, before stop, target or timeout "
-            "was reached. Discretionary exits bypass the "
-            "engine's risk plan."
-        ),
+        price = 0.0
+    
+    # ✅ Get candles for the symbol (FIXED: symbol first)
+    candles = await market.get_klines(symbol, timeframe, 160)
+    candles_by_tf = {timeframe: candles}
+    
+    # ✅ Get MTF candles (FIXED: symbol first)
+    mtf_map = {
+        "1m": ["1m", "5m", "15m", "30m", "1h"],
+        "5m": ["5m", "15m", "30m", "1h"],
+        "15m": ["15m", "1h"],
+        "30m": ["30m", "1h"],
+        "1h": ["1h"],
+    }
+    for tf in mtf_map.get(timeframe, []):
+        if tf != timeframe:
+            tf_candles = await market.get_klines(symbol, tf, 60)
+            candles_by_tf[tf] = tf_candles
+    
+    # ✅ Get signal for symbol
+    cfg_with_user = {**cfg, "user_id": user["id"]}
+    signal = await strategy.analyze(
+        symbol=symbol,
+        timeframe=timeframe,
+        candles_by_tf=candles_by_tf,
+        price=price,
+        cfg=cfg_with_user
     )
-
-    return Trade(**closed)
-
-
-@router.post(
-    "/engine/reset",
-    response_model=Wallet,
-)
-async def reset_engine(
-    user: Dict[str, Any] = Sub,
-) -> Wallet:
-    user_id = user["id"]
-
-    await engine.reset_all(
-        user_id
-    )
-
-    return Wallet(
-        **await engine.wallet_view(
-            user_id,
-            None,
-            await market.get_price(),
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Engine
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/engine/config",
-    response_model=EngineConfig,
-)
-async def get_config(
-    user: Dict[str, Any] = Sub,
-) -> EngineConfig:
-    """
-    Return this user's personal engine configuration.
-
-    Each subscriber receives their own settings.
-    """
-    return EngineConfig(
-        **await engine.config(
-            user["id"]
-        )
-    )
-
-
-@router.get(
-    "/engine/health",
-    response_model=EngineHealth,
-)
-async def get_health() -> EngineHealth:
-    """Public liveness probe for the never-sleep loop."""
-
-    return EngineHealth(
-        **engine.health()
-    )
-
-
-# ---------------------------------------------------------------------------
-# Personal trading settings
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/settings",
-    response_model=EngineConfig,
-)
-async def read_settings(
-    user: Dict[str, Any] = Sub,
-) -> EngineConfig:
-    """
-    Return only the signed-in user's personal trading settings.
-    """
-
-    user_id = user["id"]
-
-    cfg = await settings_mod.get_settings(
-        user_id,
-        refresh=True,
-    )
-
-    return EngineConfig(
-        **{
-            **cfg,
-            "starting_balance": engine.STARTING_BALANCE,
-            "timeframes": market.INTERVALS,
-            "loop_seconds": engine.LOOP_SECONDS,
-            "presence_window_seconds": engine.PRESENCE_WINDOW,
-        }
-    )
-
-
-@router.put(
-    "/settings",
-    response_model=EngineConfig,
-)
-async def write_settings(
-    patch: SettingsPatch,
-    user: Dict[str, Any] = Sub,
-) -> EngineConfig:
-    """
-    Update only the signed-in user's personal trading settings.
-
-    A normal subscriber can change their own:
-        - confidence threshold
-        - timeframe
-        - risk per trade
-        - leverage
-        - RR
-        - ATR settings
-        - trailing settings
-        - break-even
-        - partial TP
-        - time cap
-        - cooldown
-        - circuit breakers
-        - etc.
-
-    These changes never modify another user's settings or the global defaults.
-    """
-
-    user_id = user["id"]
-
-    await settings_mod.update_settings(
-        user_id,
-        patch.model_dump(
-            exclude_none=True
-        ),
-    )
-
-    return EngineConfig(
-        **await engine.config(
-            user_id
-        )
-    )
-
-
-@router.post(
-    "/settings/reset",
-    response_model=EngineConfig,
-)
-async def restore_settings(
-    user: Dict[str, Any] = Sub,
-) -> EngineConfig:
-    """
-    Reset only this user's settings to the current default configuration.
-    """
-
-    user_id = user["id"]
-
-    await settings_mod.reset_settings(
-        user_id
-    )
-
-    return EngineConfig(
-        **await engine.config(
-            user_id
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# User-specific guards
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/engine/guards",
-    response_model=Guards,
-)
-async def read_guards(
-    user: Dict[str, Any] = Sub,
-) -> Guards:
-    """
-    Evaluate entry guards using this user's personal settings.
-    """
-
-    user_id = user["id"]
-
-    cfg = await settings_mod.get_settings(
-        user_id,
-        refresh=True,
-    )
-
-    return Guards(
-        **await engine.guards(
-            user_id,
-            cfg,
-            present=True,
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Presence
-# ---------------------------------------------------------------------------
-
-@router.post("/presence")
-async def heartbeat(
-    user: Dict[str, Any] = Sub,
-) -> Dict[str, Any]:
-    """
-    Explicit dashboard heartbeat.
-
-    Polling /dashboard also refreshes presence.
-    """
-
-    await engine.touch_presence(
-        user["id"]
-    )
-
+    
+    # ✅ Get open trade
+    open_trade = await paper_trading.get_open_trade(user["id"])
+    
+    # ✅ Decorate open trade with current price
+    if open_trade and price:
+        open_trade["current_price"] = price
+        open_trade["unrealized_pnl"] = paper_trading._pnl(open_trade, price)
+    
+    # ✅ Get wallet view
+    wallet = await paper_trading.wallet_view(user["id"], open_trade, price)
+    
+    # ✅ Get guards
+    guards = await paper_trading.guards(user["id"], cfg, present=True)
+    
+    # ✅ Get trade history
+    history = await paper_trading.trade_history(user["id"], 40)
+    
+    # ✅ Get feed status
+    feed_status = market.get_feed_status(symbol)
+    
+    # ✅ Get 24h stats
+    stats = await market.get_stats_24h(symbol)
+    
+    # ✅ Build ticker
+    ticker = {
+        "symbol": symbol,
+        "price": price,
+        "open_24h": stats.get("open_24h", 0),
+        "high_24h": stats.get("high_24h", 0),
+        "low_24h": stats.get("low_24h", 0),
+        "volume_24h": stats.get("volume_24h", 0),
+        "change_24h": stats.get("change_24h", 0),
+        "change_pct_24h": stats.get("change_pct_24h", 0),
+    }
+    
+    # ✅ Get engine health
+    engine_health = paper_trading.health()
+    
+    # ✅ Sessions (placeholder for now)
+    sessions = {
+        "utc_time": _now().isoformat(),
+        "sessions": [],
+        "active": [],
+        "liquidity": "medium",
+        "tradeable": True,
+        "note": "All sessions active",
+        "overlap_active": False,
+        "minutes_to_overlap": 0,
+    }
+    
+    # ✅ Build response
     return {
-        "present": True,
-        "window_seconds": engine.PRESENCE_WINDOW,
+        "feed": feed_status,
+        "ticker": ticker,
+        "signal": signal,
+        "wallet": wallet,
+        "open_trade": open_trade,
+        "history": history,
+        "config": cfg,
+        "guards": guards,
+        "sessions": sessions,
+        "engine": engine_health,
+        "server_time": _now().isoformat(),
     }
 
 
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
+# =====================================================================
+# SIGNAL ONLY (Multi-Symbol)
+# =====================================================================
 
-@router.get(
-    "/dashboard",
-    response_model=Dashboard,
-)
-async def get_dashboard(
-    timeframe: str = Query("15m"),
-    user: Dict[str, Any] = Sub,
-) -> Dashboard:
-    return Dashboard(
-        **await engine.dashboard(
-            user["id"],
-            _tf(timeframe),
-        )
+@router.get("/signal")
+async def get_signal(
+    request: Request,
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD")
+):
+    """Get only the signal for a specific symbol"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Get user settings
+    cfg = await settings_mod.get_settings(user["id"], refresh=True)
+    
+    # ✅ Get market data
+    price = await market.get_price(symbol)
+    if not price:
+        price = 0.0
+    
+    # ✅ Get candles (FIXED: symbol first)
+    candles = await market.get_klines(symbol, timeframe, 160)
+    candles_by_tf = {timeframe: candles}
+    
+    # ✅ Get MTF candles (FIXED: symbol first)
+    mtf_map = {
+        "1m": ["1m", "5m", "15m", "30m", "1h"],
+        "5m": ["5m", "15m", "30m", "1h"],
+        "15m": ["15m", "1h"],
+        "30m": ["30m", "1h"],
+        "1h": ["1h"],
+    }
+    for tf in mtf_map.get(timeframe, []):
+        if tf != timeframe:
+            tf_candles = await market.get_klines(symbol, tf, 60)
+            candles_by_tf[tf] = tf_candles
+    
+    # ✅ Get signal
+    cfg_with_user = {**cfg, "user_id": user["id"]}
+    signal = await strategy.analyze(
+        symbol=symbol,
+        timeframe=timeframe,
+        candles_by_tf=candles_by_tf,
+        price=price,
+        cfg=cfg_with_user
     )
+    
+    return signal
+
+
+# =====================================================================
+# MARKET CANDLES (FIXED)
+# =====================================================================
+
+@router.get("/market/candles")
+async def get_candles(
+    symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD"),
+    timeframe: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 30m, 1h"),
+    limit: int = Query(160, description="Number of candles", ge=10, le=500)
+):
+    """Get candles for a specific symbol"""
+    try:
+        # ✅ FIXED: symbol first, then timeframe, then limit
+        candles = await market.get_klines(symbol, timeframe, limit)
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "provider": "coinbase",
+            "candles": candles
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Market data unavailable: {str(e)}")
+
+
+# =====================================================================
+# CLOSE TRADE
+# =====================================================================
+
+@router.post("/trades/{trade_id}/close")
+async def close_trade(
+    trade_id: str,
+    request: Request
+):
+    """Close a paper trade"""
+    user = await auth.require_subscription(request)
+    
+    # ✅ Find trade
+    trade = await db.trades.find_one({
+        "id": trade_id,
+        "user_id": user["id"],
+        "status": "OPEN"
+    })
+    
+    if not trade:
+        raise HTTPException(status_code=404, detail="Open trade not found")
+    
+    # ✅ Get current price
+    symbol = trade.get("symbol", "BTCUSDT")
+    price = await market.get_price(symbol)
+    
+    if not price:
+        raise HTTPException(status_code=503, detail="Market price unavailable")
+    
+    # ✅ Close trade
+    closed = await paper_trading.close_trade(
+        trade=trade,
+        price=price,
+        reason="MANUAL CLOSE",
+        explanation="User manually closed the position from dashboard"
+    )
+    
+    return closed
+
+
+# =====================================================================
+# PRESENCE
+# =====================================================================
+
+@router.post("/presence")
+async def presence(request: Request):
+    """Update user presence (dashboard open)"""
+    user = await auth.require_subscription(request)
+    await paper_trading.touch_presence(user["id"])
+    return {"status": "ok"}
+
+
+# =====================================================================
+# ENGINE RESET
+# =====================================================================
+
+@router.post("/engine/reset")
+async def reset_engine(request: Request):
+    """Reset paper trading account"""
+    user = await auth.require_subscription(request)
+    wallet = await paper_trading.reset_all(user["id"])
+    return wallet
+
+
+# =====================================================================
+# ENGINE HEALTH
+# =====================================================================
+
+@router.get("/engine/health")
+async def engine_health():
+    """Get engine health status"""
+    return paper_trading.health()
+
+
+# =====================================================================
+# SUPPORTED SYMBOLS
+# =====================================================================
+
+@router.get("/symbols")
+async def get_symbols():
+    """Get list of supported symbols"""
+    return {
+        "symbols": [
+            {"symbol": "BTCUSDT", "display": "BTC/USD", "min_price": 10000, "max_price": 150000},
+            {"symbol": "XAUUSD", "display": "XAU/USD", "min_price": 1500, "max_price": 3500},
+        ]
+    }

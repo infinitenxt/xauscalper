@@ -69,7 +69,7 @@ export default function AuthPage({ mode }: Props) {
             <Coins className="size-5 text-amber-400" />
           </div>
           <div className="leading-tight">
-            <h1 className="text-sm font-semibold text-slate-100">Gold Paper Terminal</h1>
+            <h1 className="text-sm font-semibold text-slate-100">Bitcoin Paper Terminal</h1>
             <p className="text-[11px] text-slate-500">Educational BTCUSDT scalping intelligence</p>
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function AuthPage({ mode }: Props) {
                 onChange={(e) => setUsername(e.target.value)}
                 data-testid="auth-username-input"
                 className="mt-1 border-slate-700 bg-slate-950 text-slate-100"
-                placeholder="goldscalper"
+                placeholder="bitcoinscalper"
               />
             </div>
           ) : null}
@@ -136,7 +136,7 @@ export default function AuthPage({ mode }: Props) {
                 onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                 data-testid="auth-referral-code-input"
                 className="mt-1 border-slate-700 bg-slate-950 text-slate-100 uppercase"
-                placeholder="GOLDXXXXXX"
+                placeholder="bitcoinXXXXXX"
               />
             </div>
           ) : null}

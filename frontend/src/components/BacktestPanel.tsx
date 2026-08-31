@@ -48,7 +48,7 @@ export default function BacktestPanel() {
             <FlaskConical className="size-4 text-amber-400" /> Strategy backtest
           </h2>
           <p className="text-[11px] text-slate-500">
-            The live scalping rules replayed over real Binance gold candles
+            The live scalping rules replayed over real Baybit bitcoin candles
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1">
