@@ -1,4 +1,4 @@
-import { Ban, Minus, Radio, ShieldCheck, TrendingDown, TrendingUp, Volume2, VolumeX } from "lucide-react";
+import { Activity, Ban, CircleAlert, Minus, Radio, ShieldCheck, TrendingDown, TrendingUp, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fmt } from "@/lib/types";
 import type { Guards, Signal } from "@/lib/types";
@@ -75,8 +75,11 @@ export default function SignalBanner({
             >
               {skin.word}
             </div>
-            <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">
-              BTCUSDT · {signal?.timeframe ?? "—"} scalp signal
+            <div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+              <span>{signal?.broker_symbol || signal?.symbol || "BTCUSDT"} · {signal?.timeframe ?? "—"}</span>
+              <span className={cn("rounded border px-1 py-0.5 text-[8px]", signal?.data_source === "broker" ? "border-sky-800 bg-sky-950/70 text-sky-300" : "border-slate-700 bg-slate-900 text-slate-400")} data-testid="signal-data-source">
+                {signal?.data_source === "broker" ? "BROKER FEED" : "PUBLIC FEED"}
+              </span>
             </div>
           </div>
         </div>
@@ -160,6 +163,8 @@ export default function SignalBanner({
         ) : null}
       </p>
 
+      <OrderBookStrip signal={signal} />
+
       {lastComment ? (
         <p
           className="mt-1.5 flex items-center gap-1.5 text-[11px] italic text-slate-400"
@@ -170,5 +175,54 @@ export default function SignalBanner({
         </p>
       ) : null}
     </section>
+  );
+}
+
+function OrderBookStrip({ signal }: { signal: Signal | undefined }) {
+  const book = signal?.order_book;
+  const captured = book?.captured_at ? new Date(book.captured_at).getTime() : 0;
+  const stale = !book || book.stale || !captured || Date.now() - captured > 5_000;
+  if (stale) {
+    return (
+      <div className="mt-2 flex items-center justify-between rounded border border-slate-800/60 bg-slate-950/40 px-2.5 py-1.5 text-[11px] text-slate-500" data-testid="orderbook-depth-unavailable">
+        <span className="flex items-center gap-1.5"><CircleAlert className="size-3" /> Depth unavailable</span>
+        <span className="text-[9px] uppercase tracking-[0.18em]">Candle signal unchanged</span>
+      </div>
+    );
+  }
+
+  const imbalance = book.imbalance;
+  const near = book.near_imbalance;
+  const spread = book.spread_bps ?? 0;
+  const pressureTone = imbalance > 0.05 ? "text-emerald-400" : imbalance < -0.05 ? "text-rose-400" : "text-slate-300";
+  const spreadTone = spread < 1.5 ? "text-emerald-400" : spread > 3.5 ? "text-amber-400" : "text-slate-300";
+  const nearLabel = near > 0.05 ? "BULLISH BIAS" : near < -0.05 ? "BEARISH BIAS" : "NEUTRAL";
+  const nearTone = near > 0.05 ? "border-emerald-800/60 bg-emerald-950/80 text-emerald-300" : near < -0.05 ? "border-rose-800/60 bg-rose-950/80 text-rose-300" : "border-slate-800 bg-slate-900 text-slate-400";
+  const pressureWidth = `${Math.min(50, Math.abs(imbalance) * 50)}%`;
+
+  return (
+    <div className="mt-2 grid grid-cols-3 gap-2 rounded border border-slate-800/80 bg-slate-950/70 p-2 text-[11px]" data-testid="orderbook-metric-strip">
+      <div aria-label="Order book imbalance" data-testid="metric-ob-imbalance">
+        <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">OB imbalance</div>
+        <div className={cn("mt-0.5 font-semibold tabular-nums", pressureTone)}>{imbalance >= 0 ? "+" : ""}{fmt(imbalance * 100, 1)}%</div>
+        <div className="relative mt-1 h-1 overflow-hidden rounded bg-slate-800">
+          <span className="absolute left-1/2 top-0 h-full w-px bg-slate-500" />
+          <span className={cn("absolute top-0 h-full transition-[width] duration-150", imbalance >= 0 ? "left-1/2 bg-emerald-500" : "right-1/2 bg-rose-500")} style={{ width: pressureWidth }} />
+        </div>
+      </div>
+      <div aria-label="Spread in basis points" data-testid="metric-spread-bps">
+        <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">Spread</div>
+        <div className={cn("mt-0.5 font-semibold tabular-nums", spreadTone)}>{fmt(spread, 2)} bps</div>
+        <div className="mt-1 text-[9px] text-slate-600">{spread < 1.5 ? "TIGHT" : spread > 3.5 ? "WIDE" : "NORMAL"}</div>
+      </div>
+      <div aria-label="Near-mid liquidity bias" data-testid="metric-liquidity-bias">
+        <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">Near-mid bias</div>
+        <div className={cn("mt-0.5 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold", nearTone)}>
+          {near > 0.05 ? <TrendingUp className="size-3" /> : near < -0.05 ? <TrendingDown className="size-3" /> : <Activity className="size-3" />}
+          {nearLabel}
+        </div>
+        <div className="mt-1 text-[9px] tabular-nums text-slate-600">{near >= 0 ? "+" : ""}{fmt(near * 100, 1)}%</div>
+      </div>
+    </div>
   );
 }

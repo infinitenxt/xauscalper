@@ -669,7 +669,6 @@ export default function PriceChart({
               shape={<CandleShape />}
               isAnimationActive={false}
               name="OHLC"
-              barCategoryGap="15%"
             />
 
             <Line

@@ -23,12 +23,13 @@ from typing import Any, Dict, Iterable, Optional
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from lib import auth, settings as settings_mod
+from lib import auth, broker_market, metaapi, settings as settings_mod, survival
 from lib.db import db
 from lib import market  # ✅ For DEFAULT_SYMBOL
+from lib import strategy  # per-account signal evaluation
 
 BRIDGE_STALE_SECONDS = 45
-ENTRY_TTL_SECONDS = 30
+ENTRY_TTL_SECONDS = 120
 
 
 def connected(account: Dict[str, Any]) -> bool:
@@ -75,6 +76,76 @@ def BTC_symbol(symbol: str) -> bool:
         return True
     
     return False
+
+
+def symbol_family(symbol: str) -> Optional[str]:
+    """Return the instrument family for a raw symbol string: 'BTC', 'XAU' or None."""
+    if not symbol:
+        return None
+    value = symbol.upper().replace("/", "").strip()
+    if "XAU" in value or "GOLD" in value:
+        return "XAU"
+    if "BTC" in value or "XBT" in value or "BITCOIN" in value:
+        return "BTC"
+    return None
+
+
+def app_symbol_for(account: Dict[str, Any]) -> str:
+    """The canonical app symbol this MT5 account trades (BTCUSDT / XAUUSD)."""
+    chosen = str(account.get("symbol") or "").upper()
+    if chosen in ("BTCUSDT", "XAUUSD"):
+        return chosen
+    # Legacy accounts predate the per-connection choice — infer from resolved broker
+    # symbol, defaulting to BTCUSDT.
+    return "XAUUSD" if symbol_family(account.get("resolved_symbol") or "") == "XAU" else "BTCUSDT"
+
+
+async def _signal_for(
+    account: Dict[str, Any],
+    timeframe: str,
+    cfg: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Evaluate a fresh signal for an arbitrary app symbol + timeframe on demand.
+
+    Mirrors engine.evaluate() but for the account's chosen instrument so an XAU/USD
+    MT5 account trades XAU signals rather than the shared BTC feed.
+    """
+    try:
+        app_symbol = app_symbol_for(account)
+        broker = await broker_market.bundle(account, timeframe)
+        if broker.get("ready"):
+            signal = strategy.analyze(
+                symbol=app_symbol,
+                timeframe=timeframe,
+                candles_by_tf=broker["candles_by_tf"],
+                price=float(broker["price"]),
+                cfg={**cfg, "order_book": await market.get_order_book(app_symbol)},
+            )
+            signal["data_source"] = "broker"
+            signal["broker_symbol"] = broker.get("broker_symbol") or ""
+            return signal
+
+        needed = dict.fromkeys([timeframe] + strategy.MTF_MAP.get(timeframe, []))
+        candles_by_tf: Dict[str, Any] = {}
+        for tf in needed:
+            candles_by_tf[tf] = await market.get_klines(app_symbol, tf, 300)
+
+        primary = candles_by_tf.get(timeframe) or []
+        price = await market.get_price(app_symbol) or (
+            primary[-1]["close"] if primary else 0.0
+        )
+        signal = strategy.analyze(
+            symbol=app_symbol,
+            timeframe=timeframe,
+            candles_by_tf=candles_by_tf,
+            price=price,
+            cfg={**cfg, "order_book": await market.get_order_book(app_symbol)},
+        )
+        signal["data_source"] = "public"
+        signal["broker_data_status"] = "stale" if broker.get("fresh") is False else "syncing"
+        return signal
+    except Exception:
+        return None
 
 
 def lot_valid(account: Dict[str, Any]) -> tuple[bool, str]:
@@ -140,9 +211,10 @@ async def queue_command(
         "completed_at": None,
     }
 
+    result: Optional[Dict[str, Any]] = None
     try:
         await db.mt5_commands.insert_one(doc)
-        return doc
+        result = doc
 
     except DuplicateKeyError:
         existing = await db.mt5_commands.find_one(
@@ -175,9 +247,13 @@ async def queue_command(
                 return_document=ReturnDocument.AFTER,
             )
 
-            return refreshed or existing
+            result = refreshed or existing
+        else:
+            result = existing
 
-        return existing
+    if result and account.get("provider") == "metaapi" and result.get("status") == "pending":
+        return await metaapi.execute_command(account, result)
+    return result
 
 
 async def _queue_entry(
@@ -185,6 +261,8 @@ async def _queue_entry(
     signal: Dict[str, Any],
     cfg: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    sl_dist = float(signal["sl_dist"])
+    rr = float(signal.get("rr") or 0.0)
     key = (
         f"{account['id']}:ENTRY:{signal.get('timeframe')}:"
         f"{signal.get('direction')}:{signal.get('last_closed')}"
@@ -198,8 +276,8 @@ async def _queue_entry(
             "direction": signal["direction"],
             "lots": float(account["lot_size"]),
 
-            "sl_dist": float(signal["sl_dist"]),
-            "tp_dist": float(signal["tp_dist"]),
+            "sl_dist": sl_dist,
+            "tp_dist": sl_dist * rr,
 
             "entry_reference": float(signal["price"]),
             "atr": float(signal.get("atr") or 0.0),
@@ -225,6 +303,10 @@ async def _queue_entry(
             "trail_start_r": float(
                 cfg["trail_start_r"]
             ),
+
+            "trailing_enabled": 1.0 if bool(cfg.get("trailing_enabled", True)) else 0.0,
+
+            "profit_lock_r": float(cfg.get("profit_lock_r", 0.10)),
 
             "trail_distance": (
                 float(cfg["trail_atr_mult"])
@@ -298,6 +380,8 @@ async def process_cycle(
         {"revoked": {"$ne": True}}
     ).to_list(500)
 
+    shared_signal = signal  # BTC feed signal computed once by the engine cycle
+
     for account in accounts:
 
         user_id = str(account["user_id"])
@@ -312,12 +396,32 @@ async def process_cycle(
                 refresh=True
             )
 
+        # Per-account instrument signal (BTCUSDT feed for BTC accounts, XAU feed
+        # for XAU accounts). Falls back to the shared signal only if evaluation
+        # fails for a BTC account.
+        account_symbol = app_symbol_for(account)
+        primary_tf = str(user_cfg.get("primary_timeframe", "5m"))
+        if account.get("provider") == "metaapi":
+            account = await metaapi.sync_account(account, primary_tf)
+        account_signal = await _signal_for(account, primary_tf, user_cfg)
+        if account_signal is None and account_symbol == "BTCUSDT":
+            account_signal = shared_signal
+        signal = account_signal
+
         position = await db.mt5_positions.find_one(
             {
                 "account_id": account["id"],
                 "status": "OPEN",
             }
         )
+
+        survival_session = await survival.evaluate_limits(account)
+        survival_active = bool(survival_session.get("enabled"))
+        survival_stop = str(survival_session.get("stop_reason") or "")
+        if survival_stop:
+            if position:
+                await _queue_close(account, position, survival_stop)
+            continue
 
         if position:
             await _entry_status(
@@ -333,6 +437,12 @@ async def process_cycle(
                 if opened
                 else 0
             )
+
+            if survival_active and signal and signal.get("data_source") == "broker":
+                ai_decision = await survival.consensus(account, survival_session, signal, position)
+                if str(ai_decision.get("consensus") or "").startswith("CLOSE:"):
+                    await _queue_close(account, position, "AI CONSENSUS CLOSE")
+                    continue
 
             max_hold = int(
                 float(
@@ -352,9 +462,11 @@ async def process_cycle(
                 )
 
             elif (
+                bool(user_cfg.get("reverse_exit_enabled", True))
+                and
                 signal
-                and elapsed >= max_hold * 0.35
-                and float(position.get("profit") or 0.0) < 0
+                and signal.get("data_source") == "broker"
+                and elapsed >= max(0.0, float(user_cfg.get("reverse_exit_min_hold_minutes", 1.0)) * 60)
                 and signal.get("direction")
                 not in (
                     position.get("direction"),
@@ -362,14 +474,22 @@ async def process_cycle(
                 )
                 and float(
                     signal.get("confidence") or 0.0
-                ) >= 55
+                ) >= float(user_cfg.get("reverse_exit_confidence", 60.0))
             ):
                 await _queue_close(
                     account,
                     position,
-                    "MOMENTUM FADE",
+                    "MARKET REVERSE",
                 )
 
+            continue
+
+        if not signal or signal.get("data_source") != "broker":
+            await _entry_status(
+                account,
+                "blocked",
+                "Broker data is syncing or stale; public signals remain view-only",
+            )
             continue
 
         # ---------------------------------------------------------------
@@ -500,7 +620,7 @@ async def process_cycle(
 
         if (
             not auth.is_subscribed(user)
-            or not auth.is_mt5_live_entitled(user)
+            or not auth.is_mt5_provider_entitled(user, str(account.get("provider") or "ea"))
         ):
             await db.mt5_accounts.update_one(
                 {"id": account["id"]},
@@ -540,6 +660,16 @@ async def process_cycle(
                 "An MT5 entry command is awaiting broker confirmation",
             )
             continue
+
+        if survival_active:
+            ai_decision = await survival.consensus(account, survival_session, signal, None)
+            if str(ai_decision.get("consensus") or "") != f"ENTRY:{direction}":
+                await _entry_status(
+                    account,
+                    "waiting",
+                    "Survival agents did not reach unanimous entry consensus",
+                )
+                continue
 
         # ✅ Queue ENTRY using this user's settings.
         await _queue_entry(

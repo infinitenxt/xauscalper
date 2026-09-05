@@ -9,7 +9,7 @@ import json
 import subprocess
 import uuid
 
-from .helpers import cleanup_user, make_subscribed_user
+from .helpers import DB_NAME, cleanup_user, make_subscribed_user
 
 HEARTBEAT_BASE = {
     "balance": 5000.0, "equity": 5000.0, "free_margin": 5000.0,
@@ -20,7 +20,7 @@ HEARTBEAT_BASE = {
 
 def _mongo_eval(js: str) -> str:
     out = subprocess.run(
-        ["mongosh", "bitcoin_terminal", "--quiet", "--eval", js],
+        ["mongosh", DB_NAME, "--quiet", "--eval", js],
         capture_output=True, text=True, timeout=20,
     )
     assert out.returncode == 0, f"mongosh failed: {out.stderr[:400]}"
@@ -69,7 +69,7 @@ def _heartbeat(user_client, token, login, server, positions):
 
 def test_accepted_entry_confirms_when_position_appears(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "reconentry", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "reconentry", days=3, live_plan_id="mt5-live-monthly")
     try:
         account_id, token = _connect(user_client, login="31200", server="Tscheck-Recon")
         # Baseline heartbeat with no position, to establish the account as connected.
@@ -97,7 +97,7 @@ def test_accepted_entry_confirms_when_position_appears(client, backend_url):
 
 def test_accepted_close_confirms_when_ticket_disappears(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "reconclose", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "reconclose", days=3, live_plan_id="mt5-live-monthly")
     try:
         account_id, token = _connect(user_client, login="31201", server="Tscheck-Recon2")
         # Heartbeat with the position open first, so the backend records it as OPEN.

@@ -101,27 +101,59 @@ def is_subscribed(user: Optional[Dict[str, Any]]) -> bool:
     return bool(exp and exp > now())
 
 
-def is_mt5_live_entitled(user: Optional[Dict[str, Any]]) -> bool:
+def _active_entitlement(user: Optional[Dict[str, Any]], field: str) -> bool:
     if not user:
         return False
     if user.get("role") == "admin":
         return True
-    entitlement = user.get("mt5_live_subscription") or {}
+    entitlement = user.get(field) or {}
     exp = aware(entitlement.get("expires_at"))
     return bool(entitlement.get("status") == "active" and exp and exp > now())
 
 
-def mt5_live_public(user: Dict[str, Any]) -> Dict[str, Any]:
-    entitlement = user.get("mt5_live_subscription") or {}
+def is_mt5_basic_entitled(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    return _active_entitlement(user, "mt5_basic_subscription") or _active_entitlement(user, "mt5_live_subscription")
+
+
+def is_mt5_managed_entitled(user: Optional[Dict[str, Any]]) -> bool:
+    return _active_entitlement(user, "mt5_managed_subscription")
+
+
+def is_mt5_live_entitled(user: Optional[Dict[str, Any]]) -> bool:
+    """Backward-compatible alias for the EA-based Basic entitlement."""
+    return is_mt5_basic_entitled(user)
+
+
+def is_mt5_provider_entitled(user: Optional[Dict[str, Any]], provider: str) -> bool:
+    return is_mt5_managed_entitled(user) if provider == "metaapi" else is_mt5_basic_entitled(user)
+
+
+def mt5_entitlement_public(user: Dict[str, Any], field: str, active: bool) -> Dict[str, Any]:
+    entitlement = user.get(field) or {}
     exp = aware(entitlement.get("expires_at"))
     return {
-        "active": is_mt5_live_entitled(user),
+        "active": active,
         "plan_id": entitlement.get("plan_id"),
         "plan_name": entitlement.get("plan_name"),
         "started_at": entitlement.get("started_at"),
         "expires_at": entitlement.get("expires_at"),
         "days_left": max(0, int((exp - now()).total_seconds() // 86400)) if exp else 0,
     }
+
+
+def mt5_basic_public(user: Dict[str, Any]) -> Dict[str, Any]:
+    field = "mt5_basic_subscription" if user.get("mt5_basic_subscription") else "mt5_live_subscription"
+    return mt5_entitlement_public(user, field, is_mt5_basic_entitled(user))
+
+
+def mt5_managed_public(user: Dict[str, Any]) -> Dict[str, Any]:
+    return mt5_entitlement_public(user, "mt5_managed_subscription", is_mt5_managed_entitled(user))
+
+
+def mt5_live_public(user: Dict[str, Any]) -> Dict[str, Any]:
+    return mt5_basic_public(user)
 
 
 def public_user(user: Dict[str, Any]) -> Dict[str, Any]:

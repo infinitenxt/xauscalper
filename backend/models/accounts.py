@@ -99,6 +99,11 @@ class BillingStatus(BaseModel):
     message: str = ""
     mt5_live_plan: Optional[Plan] = None
     mt5_live_entitlement: Mt5LiveEntitlement = Field(default_factory=Mt5LiveEntitlement)
+    mt5_basic_plan: Optional[Plan] = None
+    mt5_basic_entitlement: Mt5LiveEntitlement = Field(default_factory=Mt5LiveEntitlement)
+    mt5_managed_plan: Optional[Plan] = None
+    mt5_managed_entitlement: Mt5LiveEntitlement = Field(default_factory=Mt5LiveEntitlement)
+    metaapi_configured: bool = False
 
 
 class OrderRequest(BaseModel):

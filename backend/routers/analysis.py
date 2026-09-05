@@ -47,7 +47,9 @@ async def run_backtest(
     # Each user gets a backtest based on their own settings.
     # ---------------------------------------------------------------
     user_id = str(user["id"])
-    key = f"{user_id}:{timeframe}:{days}"
+    cfg = await settings_mod.get_settings(user_id, refresh=True)
+    symbol = cfg.get("symbol", market.DEFAULT_SYMBOL)
+    key = f"{user_id}:{symbol}:{timeframe}:{days}"
 
     hit = _cache.get(key)
 
@@ -61,9 +63,6 @@ async def run_backtest(
     # ---------------------------------------------------------------
     # Get user's preferred symbol
     # ---------------------------------------------------------------
-    cfg = await settings_mod.get_settings(user_id, refresh=True)
-    symbol = cfg.get("symbol", market.DEFAULT_SYMBOL)
-
     # ---------------------------------------------------------------
     # Market history remains shared.
     # ---------------------------------------------------------------
@@ -118,6 +117,7 @@ async def run_backtest(
         timeframe,
         cfg,
         mtf,
+        symbol,
     )
 
     result["generated_at"] = (

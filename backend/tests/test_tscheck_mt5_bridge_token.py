@@ -8,7 +8,7 @@ wrong or revoked bearer tokens are rejected with 401.
 import subprocess
 import json
 
-from .helpers import cleanup_user, make_subscribed_user
+from .helpers import DB_NAME, cleanup_user, make_subscribed_user
 
 
 def _mongo_find_account(account_id: str):
@@ -19,7 +19,7 @@ def _mongo_find_account(account_id: str):
         "db.mt5_accounts.findOne({id: '%s'}, {_id: 0})" % account_id
     )
     out = subprocess.run(
-        ["mongosh", "bitcoin_terminal", "--quiet", "--eval", script],
+        ["mongosh", DB_NAME, "--quiet", "--eval", script],
         capture_output=True, text=True, timeout=20,
     )
     return out.stdout
@@ -27,7 +27,7 @@ def _mongo_find_account(account_id: str):
 
 def test_bridge_create_returns_one_token_and_hides_it_in_mongo(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "bridge", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "bridge", days=3, live_plan_id="mt5-live-monthly")
     try:
         resp = user_client.post(
             "/mt5/account",

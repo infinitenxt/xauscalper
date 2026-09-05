@@ -1,5 +1,6 @@
 """Shared helpers for auth-based tscheck backend tests."""
 
+import os
 import time
 import uuid
 
@@ -7,6 +8,24 @@ import httpx
 
 ADMIN_EMAIL = "admin@infinitenxt.com"
 ADMIN_PASSWORD = "Harsh@10576"
+
+
+def _read_db_name() -> str:
+    """Read DB_NAME from backend/.env so mongosh helpers hit the same database
+    the running backend process uses (never hardcode; the DB was renamed once
+    already and tests must not silently target a stale database name)."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    try:
+        with open(env_path) as f:
+            for line in f:
+                if line.strip().startswith("DB_NAME="):
+                    return line.strip().split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return os.environ.get("DB_NAME", "test_database")
+
+
+DB_NAME = _read_db_name()
 
 
 def _attach_cookie(c: httpx.Client, resp: httpx.Response) -> None:

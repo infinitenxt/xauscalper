@@ -39,7 +39,7 @@ def _heartbeat(user_client, token, **overrides):
 
 def test_heartbeat_binding_and_symbol_allowlist(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "hbind", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "hbind", days=3, live_plan_id="mt5-live-monthly")
     try:
         token = _connect(user_client)
 

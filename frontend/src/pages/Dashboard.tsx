@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Check, HandCoins, Info, LogOut, ServerCog, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +11,6 @@ import ActivePositionPanel from "@/components/ActivePositionPanel";
 import BacktestPanel from "@/components/BacktestPanel";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import PriceChart from "@/components/PriceChart";
-import SessionBar from "@/components/SessionBar";
 import SettingsPanel from "@/components/SettingsPanel";
 import SignalBanner from "@/components/SignalBanner";
 import SignalPanel from "@/components/SignalPanel";
@@ -458,7 +456,7 @@ export default function Dashboard() {
           <dl className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-3 lg:grid-cols-4">
             {[
               ["Auto-trade threshold", `${fmt(data?.config.confidence_threshold ?? 80, 0)}% confluence`],
-              ["Entry timeframe", data?.config.primary_timeframe ?? "1m"],
+              ["Entry timeframe", data?.config.primary_timeframe ?? "5m"],
               ["Risk per trade", `${fmt(data?.config.risk_per_trade_pct ?? 1, 2)}% of balance`],
               ["Stop / target", `${fmt(data?.config.atr_sl_mult ?? 0.9, 2)}x ATR · R:R ${fmt(data?.config.base_rr ?? 1.4, 2)}`],
               ["Break-even", `at +${fmt(data?.config.breakeven_at_r ?? 0.5, 2)}R`],

@@ -5,10 +5,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from lib import market_sessions, strategy
-from lib.market import INTERVAL_MINUTES
+from lib.market import INTERVAL_MINUTES, DEFAULT_SYMBOL
 
 WARMUP = 210
 START_EQUITY = 10_000.0
+
+
+def _milliseconds(value: float) -> int:
+    return int(value if value >= 1_000_000_000_000 else value * 1000)
+
+
+def _seconds(value: float) -> float:
+    return value / 1000 if value >= 1_000_000_000_000 else value
 
 
 def _empty(reason: str) -> Dict[str, Any]:
@@ -26,6 +34,7 @@ def run(
     timeframe: str,
     cfg: Dict[str, Any],
     mtf: Dict[str, List[Dict[str, float]]] | None = None,
+    symbol: str = DEFAULT_SYMBOL,
 ) -> Dict[str, Any]:
     n = len(candles)
     if n < WARMUP + 30:
@@ -40,11 +49,17 @@ def run(
     fraction = float(cfg["partial_tp_fraction"])
     trail_start = float(cfg["trail_start_r"])
     trail_mult = float(cfg["trail_atr_mult"])
+    reverse_enabled = bool(cfg.get("reverse_exit_enabled", True))
+    reverse_confidence = float(cfg.get("reverse_exit_confidence", 60.0))
+    reverse_min_bars = max(0, int(float(cfg.get("reverse_exit_min_hold_minutes", 1.0)) / tf_min))
+    replay_cfg = {**cfg, "use_closed_candle": False}
+    # Historical replay must never emit live Telegram notifications.
+    replay_cfg.pop("user_id", None)
 
     equity = START_EQUITY
     peak = equity
     max_dd = 0.0
-    curve: List[Dict[str, Any]] = [{"time": candles[WARMUP]["time"], "equity": round(equity, 2)}]
+    curve: List[Dict[str, Any]] = [{"time": _milliseconds(candles[WARMUP]["time"]), "equity": round(equity, 2)}]
     trades: List[Dict[str, Any]] = []
     reasons: Dict[str, int] = {}
     gross_win = 0.0
@@ -58,9 +73,17 @@ def run(
             cutoff = candles[i]["time"]
             for tf, series in mtf.items():
                 if tf != timeframe:
-                    by_tf[tf] = [c for c in series if c["time"] <= cutoff] or series
+                    historical = [c for c in series if c["time"] <= cutoff]
+                    if len(historical) >= 60:
+                        by_tf[tf] = historical
         price = window[-1]["close"]
-        signal = strategy.analyze(timeframe, by_tf, price, cfg)
+        signal = strategy.analyze(
+            symbol=symbol,
+            timeframe=timeframe,
+            candles_by_tf=by_tf,
+            price=price,
+            cfg=replay_cfg,
+        )
         if not signal.get("tradeable"):
             i += 1
             continue
@@ -117,6 +140,30 @@ def run(
                 if (long and new_sl > sl) or (not long and new_sl < sl):
                     sl = new_sl
                     trailing = True
+            if reverse_enabled and bars_held >= reverse_min_bars:
+                reverse_by_tf: Dict[str, List[Dict[str, float]]] = {timeframe: candles[: j + 1]}
+                if mtf:
+                    cutoff = candles[j]["time"]
+                    for tf, series in mtf.items():
+                        if tf == timeframe:
+                            continue
+                        historical = [c for c in series if c["time"] <= cutoff]
+                        if len(historical) >= 60:
+                            reverse_by_tf[tf] = historical
+                reverse_signal = strategy.analyze(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    candles_by_tf=reverse_by_tf,
+                    price=close,
+                    cfg=replay_cfg,
+                )
+                if (
+                    reverse_signal.get("direction") not in (direction, "WAIT", None)
+                    and float(reverse_signal.get("confidence") or 0.0) >= reverse_confidence
+                ):
+                    exit_price = close
+                    exit_reason = "MARKET REVERSE"
+                    break
         if exit_price is None:
             last = min(i + max_bars, n - 1)
             exit_price = candles[last]["close"]
@@ -134,17 +181,17 @@ def run(
         reasons[exit_reason] = reasons.get(exit_reason, 0) + 1
         trades.append(
             {
-                "time": candles[i]["time"], "direction": direction, "entry": round(entry, 2),
+                "time": _milliseconds(candles[i]["time"]), "direction": direction, "entry": round(entry, 2),
                 "exit": round(exit_price, 2), "sl": round(initial_sl, 2), "tp": round(tp, 2),
                 "pnl": round(pnl, 2), "r_multiple": round(pnl / risk_amount, 2) if risk_amount else 0.0,
                 "confidence": signal["confidence"], "exit_reason": exit_reason,
                 "hold_minutes": bars_held * tf_min,
                 "session": market_sessions.classify(
-                    datetime.fromtimestamp(candles[i]["time"] / 1000, tz=timezone.utc)
+                    datetime.fromtimestamp(_seconds(candles[i]["time"]), tz=timezone.utc)
                 ),
             }
         )
-        curve.append({"time": candles[i + bars_held]["time"], "equity": round(equity, 2)})
+        curve.append({"time": _milliseconds(candles[i + bars_held]["time"]), "equity": round(equity, 2)})
         i = i + bars_held + cooldown_bars
 
     wins = [t for t in trades if t["pnl"] >= 0]
@@ -191,5 +238,5 @@ def run(
         "exit_reasons": reasons, "session_breakdown": breakdown,
         "best_session": best["session"] if best else "", "worst_session": worst["session"] if worst else "",
         "equity_curve": curve, "trade_list": trades[-40:],
-        "note": "Simulation on real bitcoin candles using the live rules. Entries fill at the signal bar close and a bar covering both levels is scored as a stop. Past behaviour is not a prediction.",
+        "note": f"Simulation on real {symbol} candles using closed-bar live rules with no future-data fallback. Entries fill at the signal bar close and a bar covering both levels is scored as a stop. Past behaviour is not a prediction.",
     }

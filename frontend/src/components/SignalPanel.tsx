@@ -80,25 +80,25 @@ export default function SignalPanel({
 
       <div className="flex flex-wrap gap-1.5 text-[10px]" data-testid="market-read-chips">
         <span className="rounded border border-slate-800 bg-slate-950/60 px-1.5 py-0.5 text-slate-300" data-testid="read-structure">
-          structure: <span className="text-slate-100">{signal?.structure.label ?? "—"}</span>
+          structure: <span className="text-slate-100">{signal?.structure?.label ?? "—"}</span>
         </span>
         <span
           className={cn(
             "rounded border px-1.5 py-0.5",
-            signal?.breakout.fake
+            signal?.breakout?.fake
               ? "border-rose-900/60 bg-rose-950/40 text-rose-300"
-              : signal?.breakout.chop
+              : signal?.breakout?.chop
                 ? "border-amber-900/50 bg-amber-950/30 text-amber-200"
                 : "border-slate-800 bg-slate-950/60 text-slate-300",
           )}
           data-testid="read-breakout"
-          title={signal?.breakout.detail ?? ""}
+          title={signal?.breakout?.detail ?? ""}
         >
-          range: <span className="text-slate-100">{signal?.breakout.label ?? "—"}</span>
-          {signal?.breakout.quality ? ` · q ${(signal.breakout.quality * 100).toFixed(0)}%` : ""}
+          range: <span className="text-slate-100">{signal?.breakout?.label ?? "—"}</span>
+          {signal?.breakout?.quality ? ` · q ${((signal.breakout?.quality ?? 0) * 100).toFixed(0)}%` : ""}
         </span>
         <span className="rounded border border-slate-800 bg-slate-950/60 px-1.5 py-0.5 text-slate-300" data-testid="read-pattern">
-          candle: <span className="text-slate-100">{signal?.pattern.label ?? "—"}</span>
+          candle: <span className="text-slate-100">{signal?.pattern?.label ?? "—"}</span>
         </span>
       </div>
 

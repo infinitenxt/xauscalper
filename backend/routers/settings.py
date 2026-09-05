@@ -1,112 +1,78 @@
-"""User settings router — includes Telegram settings"""
+"""User settings router — engine config, symbol and Telegram settings."""
 
-from fastapi import APIRouter, Request, HTTPException
-from pymongo import ReturnDocument
+from fastapi import APIRouter, Request
 
-from lib import auth
-from lib.db import db
-from models.settings import UserSettings, TelegramSettingsUpdate
+from lib import auth, settings as settings_mod
 
 router = APIRouter(tags=["settings"])
+
+# Fields the user is allowed to tune from the settings panel. Everything else
+# (user_id, symbol, telegram_*, timestamps) is managed through dedicated routes.
+_ENGINE_FIELDS = set(settings_mod.DEFAULT_SETTINGS.keys()) - {"symbol"}
 
 
 @router.get("/settings")
 async def get_settings(request: Request):
-    """Get current user settings"""
+    """Get current user settings (auto-creates defaults on first read)."""
     user = await auth.require_subscription(request)
-    
-    doc = await db.settings.find_one({"user_id": user["id"]})
-    
-    if not doc:
-        # Return defaults
-        return UserSettings(user_id=user["id"]).model_dump()
-    
-    doc.pop("_id", None)
-    return doc
+    return await settings_mod.get_settings(user["id"])
+
+
+async def _update_engine_settings(request: Request, body: dict):
+    user = await auth.require_subscription(request)
+    updates = {
+        k: v
+        for k, v in body.items()
+        if k in _ENGINE_FIELDS and v is not None
+    }
+    if not updates:
+        return await settings_mod.get_settings(user["id"])
+    return await settings_mod.update_settings(user["id"], updates)
 
 
 @router.patch("/settings")
-async def update_settings(request: Request, body: dict):
-    """Update user settings"""
+async def patch_settings(request: Request, body: dict):
+    """Update engine settings (PATCH)."""
+    return await _update_engine_settings(request, body)
+
+
+@router.put("/settings")
+async def put_settings(request: Request, body: dict):
+    """Update engine settings (PUT) — used by the dashboard 'Save All Settings'."""
+    return await _update_engine_settings(request, body)
+
+
+@router.post("/settings/reset")
+async def reset_settings(request: Request):
+    """Restore engine settings to defaults, preserving symbol and Telegram config."""
     user = await auth.require_subscription(request)
-    
-    updates = {k: v for k, v in body.items() if v is not None}
-    updates["updated_at"] = auth.now()
-    
-    result = await db.settings.find_one_and_update(
-        {"user_id": user["id"]},
-        {"$set": updates},
-        upsert=True,
-        return_document=ReturnDocument.AFTER
-    )
-    
-    if result:
-        result.pop("_id", None)
-    
-    return result or {"user_id": user["id"], **updates}
+    existing = await settings_mod.get_settings(user["id"])
+
+    reset_values = {k: v for k, v in settings_mod.DEFAULT_SETTINGS.items() if k != "symbol"}
+    # Preserve the user's chosen symbol and Telegram credentials across a reset.
+    for keep in ("telegram_bot_token", "telegram_channel_id", "telegram_alerts_enabled"):
+        if keep in existing:
+            reset_values[keep] = existing[keep]
+
+    return await settings_mod.update_settings(user["id"], reset_values)
 
 
-# ✅ Telegram settings route
+@router.patch("/settings/symbol")
+async def update_symbol(request: Request, body: dict):
+    """Update the user's active trading symbol (BTCUSDT / XAUUSD)."""
+    user = await auth.require_subscription(request)
+    symbol = str(body.get("symbol") or "BTCUSDT")
+    return await settings_mod.update_symbol(user["id"], symbol)
+
+
 @router.patch("/settings/telegram")
-async def update_telegram_settings(
-    request: Request,
-    body: dict
-):
-    """Update Telegram settings only"""
+async def update_telegram_settings(request: Request, body: dict):
+    """Update Telegram alert settings (auto-creates the settings doc if missing)."""
     user = await auth.require_subscription(request)
-    
-    bot_token = body.get("bot_token")
-    channel_id = body.get("channel_id")
-    enabled = body.get("enabled", False)
-    
-    # ✅ Auto-create settings if not exists
-    existing = await db.settings.find_one({"user_id": user["id"]})
-    
-    if not existing:
-        # ✅ Create default settings with Telegram fields
-        default_settings = {
-            "user_id": user["id"],
-            "confidence_threshold": 70.0,
-            "min_adx": 18.0,
-            "min_rr": 1.50,
-            "risk_per_trade_pct": 8.0,
-            "atr_sl_mult": 1.00,
-            "base_rr": 1.80,
-            "trail_start_r": 0.80,
-            "trail_atr_mult": 0.60,
-            "breakeven_at_r": 0.80,
-            "profit_lock_r": 0.10,
-            "daily_loss_limit_pct": 20.0,
-            "max_trades_per_hour": 6,
-            "consecutive_loss_pause": 3,
-            "pause_minutes_after_losses": 15,
-            "max_hold_minutes": 15,
-            "cooldown_seconds": 45,
-            "stale_entry_max_pct": 30.0,
-            "primary_timeframe": "1m",
-            "auto_trade_enabled": True,
-            "session_filter_enabled": False,
-            "telegram_bot_token": bot_token,
-            "telegram_channel_id": channel_id,
-            "telegram_alerts_enabled": enabled,
-            "created_at": auth.now(),
-            "updated_at": auth.now()
-        }
-        await db.settings.insert_one(default_settings)
-        default_settaings.pop("_id", None)
-        return {"status": "created", "settings": default_settings}
-    
-    # ✅ Update existing
     updates = {
-        "telegram_bot_token": bot_token,
-        "telegram_channel_id": channel_id,
-        "telegram_alerts_enabled": enabled,
-        "updated_at": auth.now()
+        "telegram_bot_token": body.get("bot_token"),
+        "telegram_channel_id": body.get("channel_id"),
+        "telegram_alerts_enabled": bool(body.get("enabled", False)),
     }
-    
-    await db.settings.update_one(
-        {"user_id": user["id"]},
-        {"$set": updates}
-    )
-    
-    return {"status": "updated", "settings": updates}
+    result = await settings_mod.update_settings(user["id"], updates)
+    return {"status": "updated", "settings": result}

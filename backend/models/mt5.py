@@ -12,11 +12,23 @@ class Mt5ConnectRequest(BaseModel):
     account_login: str = Field(min_length=3, max_length=32)
     broker_server: str = Field(min_length=2, max_length=100)
     lot_size: float = Field(gt=0)
+    symbol: Literal["BTCUSDT", "XAUUSD"] = "BTCUSDT"
 
 
 class Mt5SettingsPatch(BaseModel):
     lot_size: Optional[float] = Field(default=None, gt=0)
     auto_trade_enabled: Optional[bool] = None
+
+
+class ManagedMt5ConnectRequest(BaseModel):
+    mode: Literal["demo", "live"]
+    login: str = Field(pattern=r"^[0-9]{3,32}$")
+    server: str = Field(min_length=2, max_length=160)
+    password: str = Field(min_length=1, max_length=256)
+    account_name: str = Field(min_length=2, max_length=100)
+    region: Literal["new-york", "london", "singapore"] = "singapore"
+    lot_size: float = Field(gt=0)
+    symbol: Literal["BTCUSDT", "XAUUSD"] = "BTCUSDT"
 
 
 class Mt5Position(BaseModel):
@@ -41,8 +53,8 @@ class Mt5Command(BaseModel):
     symbol: str
     direction: str = ""
     lots: float = 0.0
-    sl: float = 0.0
-    tp: float = 0.0
+    sl_dist: float = 0.0
+    tp_dist: float = 0.0
     reason: str = ""
     payload: Dict[str, object] = Field(default_factory=dict)
     broker_ticket: Optional[str] = None
@@ -64,6 +76,7 @@ class Mt5Account(BaseModel):
     mode: str
     account_login: str
     broker_server: str
+    symbol: str = "BTCUSDT"
     status: str
     connected: bool = False
     resolved_symbol: str = ""
@@ -89,6 +102,16 @@ class Mt5Account(BaseModel):
     last_error: str = ""
     entry_state: str = "waiting"
     entry_reason: str = "Waiting for a qualifying signal"
+    broker_data_ready: bool = False
+    broker_data_source: str = "public"
+    broker_tick_at: Optional[datetime] = None
+    broker_bid: float = 0.0
+    broker_ask: float = 0.0
+    broker_spread_points: float = 0.0
+    metaapi_account_id: str = ""
+    metaapi_region: str = ""
+    metaapi_state: str = ""
+    metaapi_connection_status: str = ""
     created_at: Optional[datetime] = None
     position: Optional[Mt5Position] = None
 
@@ -135,6 +158,32 @@ class BridgeHeartbeat(BaseModel):
     positions: List[BridgePosition] = Field(default_factory=list)
 
 
+class BridgeMarketBar(BaseModel):
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h"]
+    open_time: int = Field(gt=0)
+    duration_seconds: int = Field(gt=0)
+    open: float = Field(gt=0)
+    high: float = Field(gt=0)
+    low: float = Field(gt=0)
+    close: float = Field(gt=0)
+    tick_volume: float = Field(ge=0)
+    spread_points: int = Field(ge=0)
+
+
+class BridgeMarketData(BaseModel):
+    symbol: str = Field(min_length=2, max_length=64)
+    broker_day: str = Field(default="", pattern=r"^$|^\d{4}\.\d{2}\.\d{2}$")
+    bid: float = Field(gt=0)
+    ask: float = Field(gt=0)
+    tick_time: int = Field(gt=0)
+    point: float = Field(gt=0)
+    digits: int = Field(ge=0, le=12)
+    trade_stops_level: int = Field(ge=0)
+    contract_size: float = Field(gt=0)
+    spread_points: float = Field(ge=0)
+    bars: List[BridgeMarketBar] = Field(default_factory=list, max_length=500)
+
+
 class BridgePollResponse(BaseModel):
     command: Optional[Mt5Command] = None
     server_time: datetime
@@ -150,6 +199,35 @@ class BridgeAck(BaseModel):
     broker_message: str = ""
     filled_price: Optional[float] = None
     filled_volume: Optional[float] = None
+
+
+class SurvivalSettingsPatch(BaseModel):
+    enabled: bool
+    daily_profit_target_usd: float = Field(gt=0, le=1_000_000)
+    daily_drawdown_limit_pct: float = Field(gt=0, le=50)
+    max_drawdown_limit_pct: float = Field(gt=0, le=80)
+
+
+class SurvivalStatus(BaseModel):
+    enabled: bool = False
+    activation_requested: bool = False
+    status: str = "idle"
+    balance: float = 0.0
+    equity: float = 0.0
+    daily_profit_target_usd: float = 25.0
+    daily_drawdown_limit_pct: float = 3.0
+    max_drawdown_limit_pct: float = 10.0
+    daily_profit_usd: float = 0.0
+    daily_drawdown_pct: float = 0.0
+    max_drawdown_pct: float = 0.0
+    target_progress_pct: float = 0.0
+    broker_feed_ready: bool = False
+    broker_day: str = ""
+    gpt: Dict[str, object] = Field(default_factory=dict)
+    claude: Dict[str, object] = Field(default_factory=dict)
+    consensus: str = "IDLE"
+    last_error: str = ""
+    updated_at: Optional[datetime] = None
 
 
 class AdminMt5Account(Mt5Account):

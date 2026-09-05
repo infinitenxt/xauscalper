@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from datetime import datetime, timezone
 
-from lib import auth, paper_trading, market, strategy, settings as settings_mod
+from lib import auth, broker_market, paper_trading, market, strategy, settings as settings_mod, engine
 from lib.db import db
 
 router = APIRouter(tags=["trading"])
@@ -16,6 +16,22 @@ router = APIRouter(tags=["trading"])
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _signal_market(user_id: str, symbol: str, timeframe: str):
+    account = await broker_market.account_for_user(user_id, symbol)
+    if account:
+        broker = await broker_market.bundle(account, timeframe)
+        if broker.get("ready"):
+            return broker["candles_by_tf"], float(broker["price"]), "broker", broker.get("broker_symbol") or ""
+
+    needed = dict.fromkeys([timeframe] + strategy.MTF_MAP.get(timeframe, []))
+    candles_by_tf = {}
+    for tf in needed:
+        candles_by_tf[tf] = await market.get_klines(symbol, tf, 300 if tf == timeframe else 80)
+    primary = candles_by_tf.get(timeframe) or []
+    price = await market.get_price(symbol) or (primary[-1]["close"] if primary else 0.0)
+    return candles_by_tf, price, "public", ""
 
 
 # =====================================================================
@@ -37,37 +53,19 @@ async def get_dashboard(
     # ✅ Get user settings
     cfg = await settings_mod.get_settings(user["id"], refresh=True)
     
-    # ✅ Get market data for symbol
-    price = await market.get_price(symbol)
-    if not price:
-        price = 0.0
-    
-    # ✅ Get candles for the symbol (FIXED: symbol first)
-    candles = await market.get_klines(symbol, timeframe, 160)
-    candles_by_tf = {timeframe: candles}
-    
-    # ✅ Get MTF candles (FIXED: symbol first)
-    mtf_map = {
-        "1m": ["1m", "5m", "15m", "30m", "1h"],
-        "5m": ["5m", "15m", "30m", "1h"],
-        "15m": ["15m", "1h"],
-        "30m": ["30m", "1h"],
-        "1h": ["1h"],
-    }
-    for tf in mtf_map.get(timeframe, []):
-        if tf != timeframe:
-            tf_candles = await market.get_klines(symbol, tf, 60)
-            candles_by_tf[tf] = tf_candles
+    candles_by_tf, price, data_source, broker_symbol = await _signal_market(str(user["id"]), symbol, timeframe)
     
     # ✅ Get signal for symbol
-    cfg_with_user = {**cfg, "user_id": user["id"]}
-    signal = await strategy.analyze(
+    cfg_with_user = {**cfg, "user_id": user["id"], "order_book": await market.get_order_book(symbol)}
+    signal = strategy.analyze(
         symbol=symbol,
         timeframe=timeframe,
         candles_by_tf=candles_by_tf,
         price=price,
         cfg=cfg_with_user
     )
+    signal["data_source"] = data_source
+    signal["broker_symbol"] = broker_symbol
     
     # ✅ Get open trade
     open_trade = await paper_trading.get_open_trade(user["id"])
@@ -104,8 +102,8 @@ async def get_dashboard(
         "change_pct_24h": stats.get("change_pct_24h", 0),
     }
     
-    # ✅ Get engine health
-    engine_health = paper_trading.health()
+    # ✅ Get engine health from the background loop module (engine.py runs the loop)
+    engine_health = engine.health()
     
     # ✅ Sessions (placeholder for now)
     sessions = {
@@ -151,37 +149,19 @@ async def get_signal(
     # ✅ Get user settings
     cfg = await settings_mod.get_settings(user["id"], refresh=True)
     
-    # ✅ Get market data
-    price = await market.get_price(symbol)
-    if not price:
-        price = 0.0
-    
-    # ✅ Get candles (FIXED: symbol first)
-    candles = await market.get_klines(symbol, timeframe, 160)
-    candles_by_tf = {timeframe: candles}
-    
-    # ✅ Get MTF candles (FIXED: symbol first)
-    mtf_map = {
-        "1m": ["1m", "5m", "15m", "30m", "1h"],
-        "5m": ["5m", "15m", "30m", "1h"],
-        "15m": ["15m", "1h"],
-        "30m": ["30m", "1h"],
-        "1h": ["1h"],
-    }
-    for tf in mtf_map.get(timeframe, []):
-        if tf != timeframe:
-            tf_candles = await market.get_klines(symbol, tf, 60)
-            candles_by_tf[tf] = tf_candles
+    candles_by_tf, price, data_source, broker_symbol = await _signal_market(str(user["id"]), symbol, timeframe)
     
     # ✅ Get signal
-    cfg_with_user = {**cfg, "user_id": user["id"]}
-    signal = await strategy.analyze(
+    cfg_with_user = {**cfg, "user_id": user["id"], "order_book": await market.get_order_book(symbol)}
+    signal = strategy.analyze(
         symbol=symbol,
         timeframe=timeframe,
         candles_by_tf=candles_by_tf,
         price=price,
         cfg=cfg_with_user
     )
+    signal["data_source"] = data_source
+    signal["broker_symbol"] = broker_symbol
     
     return signal
 
@@ -203,11 +183,18 @@ async def get_candles(
         return {
             "symbol": symbol,
             "timeframe": timeframe,
-            "provider": "coinbase",
+            "provider": market.get_provider(symbol),
             "candles": candles
         }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Market data unavailable: {str(e)}")
+
+
+@router.get("/market/order-book")
+async def get_order_book(symbol: str = Query("BTCUSDT", description="Symbol: BTCUSDT, XAUUSD")):
+    if symbol not in market.SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail="unsupported symbol")
+    return await market.get_order_book(symbol)
 
 
 # =====================================================================
@@ -281,7 +268,7 @@ async def reset_engine(request: Request):
 @router.get("/engine/health")
 async def engine_health():
     """Get engine health status"""
-    return paper_trading.health()
+    return engine.health()
 
 
 # =====================================================================

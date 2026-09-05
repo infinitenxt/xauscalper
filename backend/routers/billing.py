@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
@@ -169,17 +170,26 @@ async def activate(user_id: str, plan: Dict[str, Any], source: str) -> None:
 
 
 async def activate_mt5_live(user_id: str, plan: Dict[str, Any], source: str) -> None:
+    await activate_mt5_plan(user_id, plan, source, "mt5_basic_subscription")
+
+
+async def activate_mt5_managed(user_id: str, plan: Dict[str, Any], source: str) -> None:
+    await activate_mt5_plan(user_id, plan, source, "mt5_managed_subscription")
+
+
+async def activate_mt5_plan(user_id: str, plan: Dict[str, Any], source: str, field: str) -> None:
     user = await db.users.find_one({"id": user_id})
     base = auth.now()
     if user:
-        exp = auth.aware((user.get("mt5_live_subscription") or {}).get("expires_at"))
+        legacy = user.get("mt5_live_subscription") if field == "mt5_basic_subscription" else None
+        exp = auth.aware((user.get(field) or legacy or {}).get("expires_at"))
         if exp and exp > base:
             base = exp
     await db.users.update_one(
         {"id": user_id},
         {
             "$set": {
-                "mt5_live_subscription": {
+                field: {
                     "plan_id": plan["id"],
                     "plan_name": plan["name"],
                     "status": "active",
@@ -197,7 +207,12 @@ async def status(request: Request) -> BillingStatus:
     user = await auth.require_user(request)
     site = await site_doc()
     ready = razorpay_ready(site)
-    mt5_plan_doc = await db.plans.find_one({"product_type": "mt5_live", "is_active": True})
+    mt5_basic_doc = await db.plans.find_one({"product_type": {"$in": ["mt5_basic", "mt5_live"]}, "is_active": True})
+    mt5_managed_doc = await db.plans.find_one({"product_type": "mt5_managed", "is_active": True})
+    basic_plan = Plan(**{k: v for k, v in mt5_basic_doc.items() if k != "_id"}) if mt5_basic_doc else None
+    managed_plan = Plan(**{k: v for k, v in mt5_managed_doc.items() if k != "_id"}) if mt5_managed_doc else None
+    basic_entitlement = Mt5LiveEntitlement(**auth.mt5_basic_public(user))
+    managed_entitlement = Mt5LiveEntitlement(**auth.mt5_managed_public(user))
     return BillingStatus(
         plans=[Plan(**p) for p in await active_plans()],
         subscription=SubscriptionInfo(**auth.public_user(user)["subscription"]),
@@ -208,8 +223,13 @@ async def status(request: Request) -> BillingStatus:
             if ready
             else "Online payment is not configured yet — ask an admin to enable Razorpay or grant access manually."
         ),
-        mt5_live_plan=Plan(**{k: v for k, v in mt5_plan_doc.items() if k != "_id"}) if mt5_plan_doc else None,
-        mt5_live_entitlement=Mt5LiveEntitlement(**auth.mt5_live_public(user)),
+        mt5_live_plan=basic_plan,
+        mt5_live_entitlement=basic_entitlement,
+        mt5_basic_plan=basic_plan,
+        mt5_basic_entitlement=basic_entitlement,
+        mt5_managed_plan=managed_plan,
+        mt5_managed_entitlement=managed_entitlement,
+        metaapi_configured=bool(os.environ.get("METAAPI_TOKEN")),
     )
 
 
@@ -364,8 +384,10 @@ async def verify(body: VerifyRequest, request: Request) -> SubscriptionInfo:
             return SubscriptionInfo(**auth.public_user(fresh or user)["subscription"])
         raise HTTPException(status_code=409, detail="payment verification is already in progress")
 
-    if plan["product_type"] == "mt5_live":
+    if plan["product_type"] in ("mt5_live", "mt5_basic"):
         await activate_mt5_live(user["id"], plan, "razorpay")
+    elif plan["product_type"] == "mt5_managed":
+        await activate_mt5_managed(user["id"], plan, "razorpay")
     else:
         await activate(user["id"], plan, "razorpay")
     await _finalize_coupon(processing)

@@ -25,7 +25,7 @@ from models.accounts import (
     UserPatch,
     UserPublic,
 )
-from routers.billing import activate, activate_mt5_live
+from routers.billing import activate, activate_mt5_live, activate_mt5_managed
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(auth.require_admin)])
 
@@ -186,8 +186,10 @@ async def manage_subscription(user_id: str, body: GrantRequest) -> UserPublic:
         if not plan:
             raise HTTPException(status_code=404, detail="plan not found")
         clean_plan = {k: v for k, v in plan.items() if k != "_id"}
-        if plan.get("product_type") == "mt5_live":
+        if plan.get("product_type") in ("mt5_live", "mt5_basic"):
             await activate_mt5_live(user_id, clean_plan, "admin_grant")
+        elif plan.get("product_type") == "mt5_managed":
+            await activate_mt5_managed(user_id, clean_plan, "admin_grant")
         else:
             await activate(user_id, clean_plan, "admin_grant")
     elif body.days:

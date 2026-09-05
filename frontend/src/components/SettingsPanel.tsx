@@ -37,7 +37,11 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
         base_rr: config.base_rr,
         trail_start_r: config.trail_start_r,
         trail_atr_mult: config.trail_atr_mult,
+        trailing_enabled: config.trailing_enabled,
         breakeven_at_r: config.breakeven_at_r,
+        reverse_exit_enabled: config.reverse_exit_enabled,
+        reverse_exit_confidence: config.reverse_exit_confidence,
+        reverse_exit_min_hold_minutes: config.reverse_exit_min_hold_minutes,
         max_hold_minutes: config.max_hold_minutes,
         cooldown_seconds: config.cooldown_seconds,
         daily_loss_limit_pct: config.daily_loss_limit_pct,
@@ -76,12 +80,14 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:text-amber-300">
-          <Settings className="size-3.5" />
-          Settings
-        </Button>
-      </DialogTrigger>
+      <DialogTrigger
+        render={
+          <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:text-amber-300">
+            <Settings className="size-3.5" />
+            Settings
+          </Button>
+        }
+      />
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-slate-800 bg-[#111827] text-slate-100">
         <DialogHeader>
           <DialogTitle className="text-slate-100">Scalping Settings</DialogTitle>
@@ -123,7 +129,7 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
                 <Label className="text-[11px] text-slate-300">Confidence threshold %</Label>
                 <Input
                   type="number"
-                  value={settings.confidence_threshold ?? 70}
+                  value={settings.confidence_threshold ?? 80}
                   onChange={(e) => setSettings({ ...settings, confidence_threshold: Number(e.target.value) })}
                   className="mt-1 border-slate-700 bg-slate-950 text-slate-100"
                 />
@@ -260,6 +266,14 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
                 />
               </div>
               <div>
+                <Label className="text-[11px] text-slate-300">Reverse exit confidence %</Label>
+                <Input type="number" value={settings.reverse_exit_confidence ?? 60} onChange={(e) => setSettings({ ...settings, reverse_exit_confidence: Number(e.target.value) })} className="mt-1 border-slate-700 bg-slate-950 text-slate-100" data-testid="reverse-exit-confidence-input" />
+              </div>
+              <div>
+                <Label className="text-[11px] text-slate-300">Reverse minimum hold (minutes)</Label>
+                <Input type="number" step="0.5" value={settings.reverse_exit_min_hold_minutes ?? 1} onChange={(e) => setSettings({ ...settings, reverse_exit_min_hold_minutes: Number(e.target.value) })} className="mt-1 border-slate-700 bg-slate-950 text-slate-100" data-testid="reverse-exit-min-hold-input" />
+              </div>
+              <div>
                 <Label className="text-[11px] text-slate-300">Cooldown (seconds)</Label>
                 <Input
                   type="number"
@@ -332,6 +346,14 @@ export default function SettingsPanel({ config, onSave, saving, onRestoreDefault
                   checked={settings.session_filter_enabled ?? false}
                   onCheckedChange={(checked) => setSettings({ ...settings, session_filter_enabled: checked })}
                 />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] text-slate-300">Trailing stop</Label>
+                <Switch checked={settings.trailing_enabled ?? true} onCheckedChange={(checked) => setSettings({ ...settings, trailing_enabled: checked })} data-testid="trailing-stop-switch" />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] text-slate-300">Auto-cut on market reverse</Label>
+                <Switch checked={settings.reverse_exit_enabled ?? true} onCheckedChange={(checked) => setSettings({ ...settings, reverse_exit_enabled: checked })} data-testid="reverse-exit-switch" />
               </div>
             </div>
           </div>

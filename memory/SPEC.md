@@ -276,7 +276,7 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   demo or live account through a custom Expert Advisor bridge. The app never stores the MT5 master
   password: it issues a one-time, tenant-scoped bridge token, stores only its SHA-256 hash, and lets
   the EA poll outbound over HTTPS. Disconnecting revokes the token.
-- Initial provider is the downloadable `frontend/public/bitcoinTerminalBridge.mq5`; MetaApi is a planned
+- Initial provider is the downloadable `frontend/public/UniversalTerminalBridge.mq5`; MetaApi is a planned
   optional second adapter after the EA rollout is validated. The EA requires the broker's MT5 terminal
   on an always-on Windows VPS, Algo Trading enabled, the app origin added to MT5's WebRequest allowlist,
   and the exact MT5 login/server entered in the web connection form.
@@ -344,3 +344,60 @@ never deletes legacy wallets or trades, which keeps Atlas data safe across pod r
   immediately revokes the token, disables entries, cancels pending/dispatched/accepted commands and marks
   the last known open position as detached for audit. From that moment the app has no telemetry or remote
   control; only broker-hosted SL/TP and the already-running local EA continue protective management.
+- MT5 ENTRY commands carry no absolute SL/TP prices. `strategy.analyze()` exposes `sl_dist`; the command
+  sends `sl_dist` plus `tp_dist = sl_dist × rr`. Universal EA v4.1 derives broker levels from its live ASK
+  for BUY or BID for SELL, mirrors the signs, normalizes to symbol digits, and raises each distance to at
+  least `SYMBOL_TRADE_STOPS_LEVEL × SYMBOL_POINT`. Its default bridge URL is
+  `https://trade.infinitenxt.com/api/mt5/bridge`.
+
+## Update — strategy validation, reversal exits and alert cooldown
+- Historical replay is symbol-aware for BTCUSDT and XAUUSD, treats historical bars as closed, and never
+  falls back to future higher-timeframe candles. The BTC feed uses the same reachable Binance public-data
+  mirror as XAU/PAXG so both assets can be evaluated in walk-forward windows.
+- Paper and MT5 positions share configurable trailing and reversal controls. A strong opposite signal at
+  `reverse_exit_confidence` after `reverse_exit_min_hold_minutes` closes the position as MARKET REVERSE.
+  Universal EA v4.2 persists trailing/max-hold state and advances the broker stop on every tick, so the
+  trailing stop and hard autocut continue during dashboard/API outages.
+- Telegram signal alerts reserve an atomic Mongo key scoped by user, symbol, timeframe and direction.
+  A successful send starts a 600-second cooldown across all replicas; failed sends release immediately,
+  and TTL cleanup removes old cooldown records.
+- Three sequential walk-forward windows across all five supported timeframes found the most stable shared
+  default at 5m with an 80% confidence threshold (BTC 5m remained profitable in 3/3 windows; XAU 5m in
+  2/3). New/default profiles use that pair; existing users' saved symbol, timeframe and threshold remain
+  untouched because the remaining timeframes showed regime-dependent results rather than a safe universal
+  improvement.
+
+## Update — live order-book confirmation
+- BTCUSDT and XAUUSD/PAXGUSDT signals now include a bounded, non-mandatory Binance top-20 depth vote based
+  on total and near-mid bid/ask notional imbalance plus spread quality. A missing, malformed, stale or
+  unavailable book contributes zero weight and cannot block or depress the candle-based signal.
+- Depth calls use the existing public Binance data mirror with a three-second cache. Compact top-10 and
+  derived snapshots are persisted at most every 30 seconds in `order_book_snapshots` and retained for 30
+  days, creating forward data for later order-book walk-forward research; historical candle backtests
+  intentionally remain depth-neutral until enough snapshots exist.
+- The primary BUY/SELL banner shows only three actionable depth metrics below its summary: top-book
+  imbalance, spread in basis points, and near-mid liquidity bias. If depth is missing or older than five
+  seconds it shows “Depth unavailable — Candle signal unchanged” instead of stale values.
+
+## Update — broker-matched MT5 market data
+- Universal EA v4.4 uploads the broker BID/ASK, spread, symbol contract rules and 80 closed candles for
+  1m/5m/15m/30m/1h on first sync, then two recent closed bars per timer cycle. The token-authenticated
+  `/mt5/bridge/market-data` endpoint validates the account asset, stores seven-day tick telemetry and
+  idempotent broker candles keyed by account/timeframe/open time.
+- A connected account switches its dashboard and MT5 execution signal to BROKER FEED as soon as a fresh
+  tick and at least 60 primary-timeframe broker bars are available (the initial EA payload supplies 80).
+  Without MT5, the dashboard remains on PUBLIC FEED. If broker ticks become older than 10 seconds, public
+  data remains visible but new MT5 entries and backend reversal exits are blocked; broker SL/TP and the
+  local EA trailing/max-hold controls continue managing any open trade.
+
+## Update — MT5 Survival Mode
+- MT5 users can configure a USD daily profit target, daily drawdown percentage from broker-day opening
+  equity, and maximum drawdown percentage from the survival session's peak equity. Enabling Survival Mode
+  also enables MT5 auto-trading; manual disable, target completion, or either drawdown breach disables
+  both Survival Mode and auto-trading. An open position is queued for a deterministic close at any target
+  or drawdown shutdown while its broker SL and local EA protections remain active.
+- While active and only on a newly closed broker candle or position-open event, GPT-5.4 and Claude Sonnet
+  4.6 independently review a numeric market/risk snapshot through the Emergent Universal key. ENTRY needs
+  exact action/direction agreement plus every deterministic broker/risk guard. Disagreement, malformed
+  output, timeout, missing key, or either provider failure becomes HOLD. Decisions and model summaries are
+  idempotently audited in Mongo; no AI calls occur while Survival Mode is disabled or broker data is stale.

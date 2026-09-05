@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, CheckCircle2, Copy, Download, Loader2, Power, ServerCog, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
+import SurvivalModePanel from "@/components/mt5/SurvivalModePanel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { errorText, useMe } from "@/hooks/useAuth";
 import { loadRazorpayCheckout } from "@/lib/razorpay";
 import { fmt, rupees } from "@/lib/types";
-import type { BillingStatus, Mt5Account, Mt5Command, Mt5ConnectResponse, OrderResponse, SubscriptionInfo } from "@/lib/types";
+import type { BillingStatus, Mt5Account, Mt5Command, Mt5ConnectResponse, OrderResponse, SubscriptionInfo, SurvivalStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const brokerMoney = (account: Mt5Account, value: number) =>
@@ -25,9 +26,10 @@ export default function Mt5() {
   const qc = useQueryClient();
   const { data: me } = useMe();
   const account = useQuery({ queryKey: ["mt5", "account"], queryFn: () => apiGet<Mt5Account | null>("/mt5/account"), refetchInterval: 5000 });
+  const survival = useQuery({ queryKey: ["mt5", "survival"], queryFn: () => apiGet<SurvivalStatus>("/mt5/survival"), enabled: Boolean(account.data), refetchInterval: 5000, retry: false });
   const commands = useQuery({ queryKey: ["mt5", "commands"], queryFn: () => apiGet<Mt5Command[]>("/mt5/commands"), refetchInterval: 5000 });
   const billing = useQuery({ queryKey: ["billing", "status"], queryFn: () => apiGet<BillingStatus>("/billing/status") });
-  const [form, setForm] = useState({ mode: "demo", account_login: "", broker_server: "", lot_size: 0.01 });
+  const [form, setForm] = useState({ mode: "demo", account_login: "", broker_server: "", lot_size: 0.01, symbol: "BTCUSDT" });
   const [token, setToken] = useState<{ value: string; url: string; steps: string[] } | null>(null);
   const [lot, setLot] = useState("0.01");
   useEffect(() => { if (account.data) setLot(String(account.data.lot_size)); }, [account.data]);
@@ -54,6 +56,11 @@ export default function Mt5() {
   const patchAccount = useMutation({
     mutationFn: (body: { lot_size?: number; auto_trade_enabled?: boolean }) => apiPatch<Mt5Account>("/mt5/account", body),
     onSuccess: () => { toast.success("MT5 settings updated"); refresh(); },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const patchSurvival = useMutation({
+    mutationFn: (body: { enabled: boolean; daily_profit_target_usd: number; daily_drawdown_limit_pct: number; max_drawdown_limit_pct: number }) => apiPatch<SurvivalStatus>("/mt5/survival", body),
+    onSuccess: (result) => { toast.success(result.enabled ? "Survival Mode activated" : "Survival Mode disabled"); void qc.invalidateQueries({ queryKey: ["mt5"] }); },
     onError: (err) => toast.error(errorText(err)),
   });
   const disconnect = useMutation({
@@ -109,6 +116,7 @@ export default function Mt5() {
             <h2 className="text-sm font-semibold text-slate-100">Connect your private MT5 account</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div><Label className="text-[11px] text-slate-300">Account mode</Label><Select value={form.mode} onValueChange={(value) => setForm((v) => ({ ...v, mode: value }))}><SelectTrigger className="mt-1" data-testid="mt5-mode-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="demo">Demo account</SelectItem><SelectItem value="live">Live account</SelectItem></SelectContent></Select></div>
+              <div><Label className="text-[11px] text-slate-300">Instrument to auto-trade</Label><Select value={form.symbol} onValueChange={(value) => setForm((v) => ({ ...v, symbol: value }))}><SelectTrigger className="mt-1" data-testid="mt5-symbol-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BTCUSDT">BTC/USD</SelectItem><SelectItem value="XAUUSD">XAU/USD (Gold)</SelectItem></SelectContent></Select></div>
               <div><Label htmlFor="mt5-login" className="text-[11px] text-slate-300">MT5 account login</Label><Input id="mt5-login" required value={form.account_login} onChange={(e) => setForm((v) => ({ ...v, account_login: e.target.value }))} data-testid="mt5-login-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
               <div><Label htmlFor="mt5-server" className="text-[11px] text-slate-300">Exact broker server</Label><Input id="mt5-server" required value={form.broker_server} onChange={(e) => setForm((v) => ({ ...v, broker_server: e.target.value }))} placeholder="Broker-Demo" data-testid="mt5-server-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
               <div><Label htmlFor="mt5-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-lot" type="number" min="0.001" step="0.001" required value={form.lot_size} onChange={(e) => setForm((v) => ({ ...v, lot_size: Number(e.target.value) }))} data-testid="mt5-lot-input" className="mt-1 border-slate-700 bg-slate-950 text-slate-100" /></div>
@@ -124,6 +132,7 @@ export default function Mt5() {
               {current.last_error ? <p className="mt-3 text-[11px] text-amber-300" data-testid="mt5-account-error">{current.last_error}</p> : null}
               <div className="mt-4 flex flex-wrap items-end gap-3"><div><Label htmlFor="mt5-current-lot" className="text-[11px] text-slate-300">Fixed lot size</Label><Input id="mt5-current-lot" type="number" value={lot} onChange={(e) => setLot(e.target.value)} data-testid="mt5-current-lot-input" className="mt-1 w-36 border-slate-700 bg-slate-950 text-slate-100" /></div><Button size="sm" variant="outline" onClick={() => patchAccount.mutate({ lot_size: Number(lot) })} data-testid="save-mt5-lot-button" className="border-slate-700">Save lot</Button><label className="flex items-center gap-2 pb-1 text-[11px] text-slate-300"><Checkbox checked={current.auto_trade_enabled} disabled={!entitlement?.active && !current.auto_trade_enabled} onCheckedChange={(value) => patchAccount.mutate({ auto_trade_enabled: Boolean(value) })} data-testid="mt5-auto-trade-switch" />Auto-trade {current.auto_trade_enabled ? "ON" : "OFF"}</label><Button size="sm" variant="outline" onClick={() => disconnect.mutate()} data-testid="disconnect-mt5-button" className="ml-auto border-slate-700 text-rose-300">Disconnect</Button></div>
             </section>
+            <SurvivalModePanel account={current} status={survival.data} saving={patchSurvival.isPending} onSave={(value) => patchSurvival.mutate(value)} />
             {current.position ? <section className="rounded-md border border-emerald-900/40 bg-emerald-950/10 p-4" data-testid="mt5-open-position"><h2 className="text-sm font-semibold text-slate-100">Live MT5 position</h2><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-6">{[["Side", current.position.direction],["Lots", current.position.volume],["Entry", current.position.entry_price],["SL", current.position.sl],["TP", current.position.tp],["P&L", rupees(current.position.profit)]].map(([label, value]) => <div key={String(label)}><p className="text-[9px] uppercase text-slate-500">{label}</p><p className="text-sm text-slate-200">{value}</p></div>)}</div><p className="mt-3 text-[10px] text-slate-500">Disconnect is available immediately. If used, app monitoring stops at once; broker SL/TP and this local EA continue managing the open trade.</p></section> : null}
           </>
         )}

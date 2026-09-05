@@ -1275,11 +1275,15 @@ async def manage_open_trade(
     )
 
     # ✅ FIX: Check if signal is dict before using .get()
+    reverse_enabled = bool(cfg.get("reverse_exit_enabled", True))
+    reverse_confidence = float(cfg.get("reverse_exit_confidence", 60.0))
+    reverse_min_seconds = max(0.0, float(cfg.get("reverse_exit_min_hold_minutes", 1.0)) * 60)
     if (
+        reverse_enabled
+        and
         signal
         and isinstance(signal, dict)
-        and elapsed > total_hold * 0.35
-        and favorable < 0
+        and elapsed >= reverse_min_seconds
         and signal.get("direction")
         not in (
             trade["direction"],
@@ -1290,19 +1294,19 @@ async def manage_open_trade(
                 "confidence",
                 0,
             )
-        ) >= 55
+        ) >= reverse_confidence
     ):
 
         await close_trade(
             trade,
             price,
-            "MOMENTUM FADE",
+            "MARKET REVERSE",
             (
                 f"The signal engine flipped to "
                 f"{signal['direction']} at "
                 f"{signal['confidence']:.1f}% confidence "
                 f"while this {trade['direction']} trade "
-                "was underwater."
+                "reversed."
             ),
         )
 
@@ -1769,12 +1773,12 @@ async def evaluate(
     )
 
     # ✅ FIX: symbol first
-    signal = await strategy.analyze(
+    signal = strategy.analyze(
         symbol=market.DEFAULT_SYMBOL,
         timeframe=timeframe,
         candles_by_tf=candles_by_tf,
         price=price,
-        cfg=cfg,
+        cfg={**cfg, "order_book": await market.get_order_book(market.DEFAULT_SYMBOL)},
     )
 
     signal["generated_at"] = (
@@ -2039,9 +2043,9 @@ async def cycle() -> None:
                 # Analyze using THIS USER'S configuration.
                 # ------------------------------------------------------
 
-                cfg_with_user = {**user_cfg, "user_id": user_id}
+                cfg_with_user = {**user_cfg, "user_id": user_id, "order_book": await market.get_order_book(symbol)}
                 # ✅ FIX: symbol first
-                user_signal = await strategy.analyze(
+                user_signal = strategy.analyze(
                     symbol=symbol,
                     timeframe=primary_tf,
                     candles_by_tf=candles_by_tf,

@@ -48,13 +48,14 @@ export const apiGet = async <T = any>(
 
   if (!response.ok) {
     let detail = response.statusText;
+    let errorBody: any = null;
     try {
-      const errorBody = await response.json();
+      errorBody = await response.json();
       detail = errorBody.detail || errorBody.message || detail;
     } catch {
       // ignore
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, errorBody);
   }
 
   return response.json();
@@ -79,13 +80,14 @@ export const apiPost = async <T = any>(
 
   if (!response.ok) {
     let detail = response.statusText;
+    let errorBody: any = null;
     try {
-      const errorBody = await response.json();
+      errorBody = await response.json();
       detail = errorBody.detail || errorBody.message || detail;
     } catch {
       // ignore
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, errorBody);
   }
 
   return response.json();
@@ -110,13 +112,14 @@ export const apiPut = async <T = any>(
 
   if (!response.ok) {
     let detail = response.statusText;
+    let errorBody: any = null;
     try {
-      const errorBody = await response.json();
+      errorBody = await response.json();
       detail = errorBody.detail || errorBody.message || detail;
     } catch {
       // ignore
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, errorBody);
   }
 
   return response.json();
@@ -141,13 +144,14 @@ export const apiPatch = async <T = any>(
 
   if (!response.ok) {
     let detail = response.statusText;
+    let errorBody: any = null;
     try {
-      const errorBody = await response.json();
+      errorBody = await response.json();
       detail = errorBody.detail || errorBody.message || detail;
     } catch {
       // ignore
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, errorBody);
   }
 
   return response.json();
@@ -170,13 +174,14 @@ export const apiDelete = async <T = any>(
 
   if (!response.ok) {
     let detail = response.statusText;
+    let errorBody: any = null;
     try {
-      const errorBody = await response.json();
+      errorBody = await response.json();
       detail = errorBody.detail || errorBody.message || detail;
     } catch {
       // ignore
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, errorBody);
   }
 
   return response.json();

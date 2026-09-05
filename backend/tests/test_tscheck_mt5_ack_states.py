@@ -10,7 +10,7 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from .helpers import cleanup_user, make_subscribed_user
+from .helpers import DB_NAME, cleanup_user, make_subscribed_user
 
 HEARTBEAT_BASE = {
     "balance": 5000.0, "equity": 5000.0, "free_margin": 5000.0,
@@ -21,7 +21,7 @@ HEARTBEAT_BASE = {
 
 def _mongo_eval(js: str) -> str:
     out = subprocess.run(
-        ["mongosh", "bitcoin_terminal", "--quiet", "--eval", js],
+        ["mongosh", DB_NAME, "--quiet", "--eval", js],
         capture_output=True, text=True, timeout=20,
     )
     assert out.returncode == 0, f"mongosh failed: {out.stderr[:400]}"
@@ -69,7 +69,7 @@ def _connect_and_heartbeat(user_client) -> tuple[str, str]:
 
 def test_accepted_ack_leaves_command_accepted_then_executed_confirms(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "ackflow", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "ackflow", days=3, live_plan_id="mt5-live-monthly")
     try:
         account_id, token = _connect_and_heartbeat(user_client)
         cid = _insert_command(account_id, user_id)
@@ -107,7 +107,7 @@ def test_accepted_ack_leaves_command_accepted_then_executed_confirms(client, bac
 
 def test_terminal_state_is_not_overwritten_by_late_ack(client, backend_url):
     api_url = f"{backend_url}/api"
-    user_client, user_id, admin = make_subscribed_user(api_url, "acklate", days=3)
+    user_client, user_id, admin = make_subscribed_user(api_url, "acklate", days=3, live_plan_id="mt5-live-monthly")
     try:
         account_id, token = _connect_and_heartbeat(user_client)
         cid = _insert_command(account_id, user_id, status="expired")

@@ -19,7 +19,7 @@ export default function WalletPanel({ wallet, config }: Props) {
           <WalletIcon className="size-4 text-amber-400" /> Paper Wallet
         </h2>
         <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-          virtual · {money(config?.starting_balance ?? 10000)} start
+          virtual · {money(wallet?.starting_balance ?? 10000)} start
         </span>
       </div>
 

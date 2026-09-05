@@ -8,7 +8,7 @@ from lib.db import db
 # ✅ Default settings with symbol
 DEFAULT_SETTINGS = {
     # Entry thresholds
-    "confidence_threshold": 70.0,
+    "confidence_threshold": 80.0,
     "min_adx": 18.0,
     "min_rr": 1.50,
     
@@ -26,8 +26,12 @@ DEFAULT_SETTINGS = {
     # Trailing
     "trail_start_r": 0.80,
     "trail_atr_mult": 0.60,
+    "trailing_enabled": True,
     "breakeven_at_r": 0.80,
     "profit_lock_r": 0.10,
+    "reverse_exit_enabled": True,
+    "reverse_exit_confidence": 60.0,
+    "reverse_exit_min_hold_minutes": 1.0,
     
     # Cooldown
     "cooldown_seconds": 45,
@@ -39,7 +43,7 @@ DEFAULT_SETTINGS = {
     "stale_entry_max_pct": 35,
     "auto_trade_enabled": True,
     "session_filter_enabled": False,
-    "primary_timeframe": "1m",
+    "primary_timeframe": "5m",
     
     # Partial TP
     "partial_tp_at_r": 1.50,

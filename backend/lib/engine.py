@@ -888,445 +888,364 @@ async def manage_open_trade(
     signal: Optional[Dict[str, Any]],
     cfg: Dict[str, Any],
 ) -> None:
+    """
+    Manage one open paper trade on every engine cycle.
 
-    long = trade["direction"] == "BUY"
+    Important:
+    - Existing trades are managed even when no fresh signal is available.
+    - SL can only move in the profitable direction.
+    - Trailing is evaluated on every cycle and persisted immediately.
+    - A missing signal never disables SL/TP/time-cap protection.
+    """
+    if not trade or price is None:
+        return
 
-    r = (
-        trade.get("r_distance")
-        or 1.0
+    long = str(trade.get("direction", "")).upper() == "BUY"
+    entry = float(trade.get("entry") or 0.0)
+    current_sl = float(trade.get("sl") or 0.0)
+    tp = float(trade.get("tp") or 0.0)
+    initial_sl = float(
+        trade.get("initial_sl")
+        if trade.get("initial_sl") is not None
+        else current_sl
     )
 
-    favorable = (
-        (price - trade["entry"])
-        * (
-            1
-            if long
-            else -1
-        )
-    )
+    if entry <= 0 or current_sl <= 0:
+        logger.warning("invalid open trade %s: missing entry/SL", trade.get("id"))
+        return
 
+    r = abs(
+        float(trade.get("r_distance") or abs(entry - initial_sl) or 1.0)
+    )
+    if r <= 0:
+        r = 1.0
+
+    favorable = (float(price) - entry) if long else (entry - float(price))
     r_mult = favorable / r
 
-    # --------------------------------------------------------------
-    # stop loss
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Protective SL
+    # ------------------------------------------------------------------
+    if (long and price <= current_sl) or ((not long) and price >= current_sl):
+        moved = abs(current_sl - initial_sl) > 1e-9
+        trailing_active = bool(trade.get("trailing_active"))
+        breakeven_done = bool(trade.get("breakeven_done"))
 
-    if (
-        long and price <= trade["sl"]
-    ) or (
-        not long and price >= trade["sl"]
-    ):
-
-        moved = (
-            abs(
-                trade["sl"]
-                - trade["initial_sl"]
-            )
-            > 1e-9
-        )
-
-        at_be = (
-            trade.get("breakeven_done")
-            and not trade.get("trailing_active")
-        )
-
-        if not moved:
-            reason = "STOP LOSS"
-
-            expl = (
-                f"Price traded through the protective "
-                f"stop at {trade['sl']:.2f}. "
-                "The setup was invalidated and the "
-                "pre-defined risk was taken."
-            )
-
-        elif at_be:
-            reason = "BREAK-EVEN STOP"
-
-            expl = (
-                f"The stop had already been moved "
-                f"to break-even at {trade['sl']:.2f} "
-                f"after +{float(cfg['breakeven_at_r']):.2f}R. "
-                "Price returned, so the trade exited "
-                "without taking the original loss."
-            )
-
-        else:
+        if trailing_active:
             reason = "TRAILING STOP"
-
             expl = (
-                f"Price hit the trailing stop at "
-                f"{trade['sl']:.2f}. "
-                f"The stop had advanced from the original "
-                f"{trade['initial_sl']:.2f}, protecting "
-                "part of the favorable move."
+                f"Price hit the active trailing stop at {current_sl:.2f}. "
+                f"The stop had advanced from the original {initial_sl:.2f}."
+            )
+        elif breakeven_done or moved:
+            reason = "BREAK-EVEN STOP" if breakeven_done else "MANAGED STOP"
+            expl = (
+                f"Price returned to the protected stop at {current_sl:.2f}. "
+                "The stop had already been improved from the original risk."
+            )
+        else:
+            reason = "STOP LOSS"
+            expl = (
+                f"Price traded through the protective stop at {current_sl:.2f}. "
+                "The predefined risk was taken."
             )
 
         await close_trade(
             trade,
-            trade["sl"],
+            current_sl,
             reason,
             expl,
         )
-
         return
 
-    # --------------------------------------------------------------
-    # take profit
-    # --------------------------------------------------------------
-
-    if (
-        long and price >= trade["tp"]
-    ) or (
-        not long and price <= trade["tp"]
-    ):
-
+    # ------------------------------------------------------------------
+    # Take profit
+    # ------------------------------------------------------------------
+    if (long and price >= tp) or ((not long) and price <= tp):
         await close_trade(
             trade,
-            trade["tp"],
+            tp,
             "TAKE PROFIT",
             (
-                f"Target reached at "
-                f"{trade['tp']:.2f}. "
+                f"Target reached at {tp:.2f}. "
                 f"The planned reward:risk was "
-                f"{trade['rr_planned']:.2f}."
+                f"{float(trade.get('rr_planned') or 0.0):.2f}."
             ),
         )
-
         return
 
-    # --------------------------------------------------------------
-    # time cap
-    # --------------------------------------------------------------
-
-    timeout_at = _aware(
-        trade.get("timeout_at")
-    )
-
+    # ------------------------------------------------------------------
+    # Hard time cap
+    # ------------------------------------------------------------------
+    timeout_at = _aware(trade.get("timeout_at"))
     if timeout_at and _now() >= timeout_at:
-
         await close_trade(
             trade,
-            price,
+            float(price),
             "TIME CAP",
             (
-                f"Hard scalper time cap reached. "
+                "Hard scalper time cap reached. "
                 f"The trade held for "
-                f"{int(trade.get('max_hold_minutes') or 0)} "
-                "minutes without reaching SL or TP."
+                f"{int(trade.get('max_hold_minutes') or 0)} minutes "
+                "without reaching SL or TP."
             ),
         )
-
         return
 
     updates: Dict[str, Any] = {}
     log: List[str] = []
 
-    # --------------------------------------------------------------
-    # best R
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Best R
+    # ------------------------------------------------------------------
+    old_best_r = float(trade.get("best_r") or 0.0)
+    best_r = max(old_best_r, r_mult)
 
-    best_r = max(
-        float(
-            trade.get("best_r")
-            or 0.0
-        ),
-        r_mult,
+    if best_r > old_best_r + 1e-9:
+        updates["best_r"] = round(best_r, 3)
+
+    # ------------------------------------------------------------------
+    # Partial TP
+    # ------------------------------------------------------------------
+    partial_at = float(cfg.get("partial_tp_at_r", 1.50))
+    fraction = max(
+        0.0,
+        min(1.0, float(cfg.get("partial_tp_fraction", 0.40))),
     )
 
-    if best_r > float(
-        trade.get("best_r")
-        or 0.0
-    ):
-        updates["best_r"] = round(
-            best_r,
-            3,
-        )
-
-    # --------------------------------------------------------------
-    # partial TP
-    # --------------------------------------------------------------
-
-    partial_at = float(
-        cfg["partial_tp_at_r"]
-    )
-
-    fraction = float(
-        cfg["partial_tp_fraction"]
-    )
+    current_qty = float(trade.get("qty") or 0.0)
 
     if (
         not trade.get("partial_done")
-        and fraction > 0
+        and fraction > 0.0
+        and current_qty > 0.0
         and r_mult >= partial_at
     ):
-
-        close_qty = (
-            trade["qty"]
-            * fraction
+        close_qty = min(
+            current_qty,
+            max(0.0, current_qty * fraction),
         )
 
-        booked = (
-            (price - trade["entry"])
-            * (
-                1
-                if long
-                else -1
+        if close_qty > 0:
+            booked = (
+                (float(price) - entry)
+                * (1 if long else -1)
+                * close_qty
             )
-            * close_qty
-        )
 
-        wallet = await get_wallet(
-            trade["user_id"]
-        )
+            wallet = await get_wallet(trade["user_id"])
 
-        updates["qty"] = round(
-            trade["qty"]
-            - close_qty,
-            5,
-        )
-
-        updates["partial_done"] = True
-
-        updates["partial_pnl"] = round(
-            float(
-                trade.get("partial_pnl")
-                or 0.0
+            updates["qty"] = round(
+                current_qty - close_qty,
+                5,
             )
-            + booked,
-            2,
-        )
+            updates["partial_done"] = True
+            updates["partial_pnl"] = round(
+                float(trade.get("partial_pnl") or 0.0) + booked,
+                2,
+            )
 
-        await db.wallets.update_one(
-            {"user_id": trade["user_id"]},
-            {
-                "$set": {
-                    "balance": round(
-                        wallet["balance"]
-                        + booked,
-                        2,
-                    )
+            await db.wallets.update_one(
+                {"user_id": trade["user_id"]},
+                {
+                    "$set": {
+                        "balance": round(
+                            wallet["balance"] + booked,
+                            2,
+                        )
+                    },
+                    "$inc": {
+                        "realized_pnl": round(booked, 2),
+                    },
                 },
-                "$inc": {
-                    "realized_pnl": round(
-                        booked,
-                        2,
-                    )
-                },
-            },
-        )
-
-        log.append(
-            (
-                f"{_now().strftime('%H:%M:%S')} UTC — "
-                f"hit +{partial_at:.2f}R, "
-                f"banked {fraction * 100:.0f}% "
-                f"of the position "
-                f"({close_qty:.4f} {trade['symbol']}) "
-                f"at {price:.2f} "
-                f"for ${booked:,.2f}; "
-                "the rest runs."
             )
-        )
 
-        trade = {
-            **trade,
-            **updates,
-        }
+            log.append(
+                (
+                    f"{_now().strftime('%H:%M:%S')} UTC — "
+                    f"hit +{partial_at:.2f}R, banked "
+                    f"{fraction * 100:.0f}% of the position "
+                    f"({close_qty:.4f} {trade['symbol']}) at "
+                    f"{price:.2f} for ${booked:,.2f}; the rest runs."
+                )
+            )
 
-    # --------------------------------------------------------------
-    # break even
-    # --------------------------------------------------------------
+            trade = {**trade, **updates}
+            current_qty = float(trade["qty"])
 
-    be_at = float(
-        cfg["breakeven_at_r"]
-    )
+    # ------------------------------------------------------------------
+    # Break-even
+    # ------------------------------------------------------------------
+    be_at = float(cfg.get("breakeven_at_r", 0.80))
 
     if (
         not trade.get("breakeven_done")
         and r_mult >= be_at
     ):
-
-        buffer_ = 0.05 * r
+        be_buffer_r = float(cfg.get("breakeven_buffer_r", 0.05))
+        buffer_ = max(0.0, be_buffer_r) * r
 
         be_sl = (
-            trade["entry"]
-            + buffer_
+            entry + buffer_
             if long
-            else trade["entry"]
-            - buffer_
+            else entry - buffer_
         )
 
-        if (
-            long
-            and be_sl > trade["sl"]
-        ) or (
-            not long
-            and be_sl < trade["sl"]
-        ):
+        improves = (
+            (long and be_sl > current_sl + 1e-9)
+            or ((not long) and be_sl < current_sl - 1e-9)
+        )
 
-            updates["sl"] = round(
-                be_sl,
-                2,
-            )
-
+        if improves:
+            updates["sl"] = round(be_sl, 2)
             updates["breakeven_done"] = True
 
             log.append(
                 (
                     f"{_now().strftime('%H:%M:%S')} UTC — "
-                    f"reached +{be_at:.2f}R, "
-                    f"stop moved to break-even "
-                    f"{be_sl:.2f}."
+                    f"reached +{be_at:.2f}R, stop moved to "
+                    f"break-even/profit-lock {be_sl:.2f}."
                 )
             )
 
-            trade = {
-                **trade,
-                **updates,
-            }
+            current_sl = float(updates["sl"])
+            trade = {**trade, **updates}
 
-    # --------------------------------------------------------------
-    # trailing stop
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Continuous ATR trailing
+    # ------------------------------------------------------------------
+    trail_enabled = bool(
+        cfg.get("trailing_enabled", cfg.get("trail_enabled", True))
+    )
+    trail_start_r = float(cfg.get("trail_start_r", 0.70))
+    trail_atr_mult = max(
+        0.05,
+        float(cfg.get("trail_atr_mult", 0.55)),
+    )
 
-    if r_mult >= float(
-        cfg["trail_start_r"]
-    ):
+    if trail_enabled and r_mult >= trail_start_r:
+        # Prefer fresh ATR from the latest symbol-specific signal.
+        # Fall back to the ATR captured at entry.
+        atr_val = None
+        if isinstance(signal, dict):
+            try:
+                atr_val = float(signal.get("atr") or 0.0)
+            except (TypeError, ValueError):
+                atr_val = None
 
-        atr_val = (
-            trade.get("atr")
-            or r
-        )
+        if not atr_val or atr_val <= 0:
+            try:
+                atr_val = float(trade.get("atr") or 0.0)
+            except (TypeError, ValueError):
+                atr_val = None
 
-        mult = float(
-            cfg["trail_atr_mult"]
-        )
+        if not atr_val or atr_val <= 0:
+            atr_val = r
 
         candidate = (
-            price - mult * atr_val
+            float(price) - trail_atr_mult * atr_val
             if long
-            else price + mult * atr_val
+            else float(price) + trail_atr_mult * atr_val
         )
 
-        floor_ = (
-            trade["entry"]
-            + 0.3 * r
+        # Once trailing starts, never allow the stop to fall back
+        # below a meaningful profit-lock level.
+        profit_lock_r = max(
+            0.0,
+            float(cfg.get("trail_profit_lock_r", 0.30)),
+        )
+        floor_sl = (
+            entry + profit_lock_r * r
             if long
-            else trade["entry"]
-            - 0.3 * r
+            else entry - profit_lock_r * r
         )
 
         new_sl = (
-            max(candidate, floor_)
+            max(candidate, floor_sl)
             if long
-            else min(candidate, floor_)
+            else min(candidate, floor_sl)
         )
 
-        if (
-            long
-            and new_sl > trade["sl"] + 1e-9
-        ) or (
-            not long
-            and new_sl < trade["sl"] - 1e-9
-        ):
+        improves = (
+            (long and new_sl > current_sl + 1e-9)
+            or ((not long) and new_sl < current_sl - 1e-9)
+        )
 
-            updates["sl"] = round(
-                new_sl,
-                2,
+        if improves:
+            new_sl = round(new_sl, 2)
+
+            # Re-check after broker-style price rounding.
+            improves_rounded = (
+                (long and new_sl > current_sl + 1e-9)
+                or ((not long) and new_sl < current_sl - 1e-9)
             )
 
-            updates["trailing_active"] = True
+            if improves_rounded:
+                updates["sl"] = new_sl
+                updates["trailing_active"] = True
 
-            log.append(
-                (
-                    f"{_now().strftime('%H:%M:%S')} UTC — "
-                    f"{r_mult:.2f}R in profit, "
-                    f"trailing stop advanced to "
-                    f"{new_sl:.2f} "
-                    f"({mult}x ATR behind price)."
+                log.append(
+                    (
+                        f"{_now().strftime('%H:%M:%S')} UTC — "
+                        f"{r_mult:.2f}R in profit, trailing stop "
+                        f"advanced {current_sl:.2f} → {new_sl:.2f} "
+                        f"({trail_atr_mult:.2f}x ATR)."
+                    )
                 )
-            )
 
-    # --------------------------------------------------------------
-    # momentum fade
-    # --------------------------------------------------------------
+                current_sl = float(new_sl)
+                trade = {**trade, **updates}
 
-    opened = (
-        _aware(
-            trade.get("opened_at")
-        )
-        or _now()
-    )
-
-    elapsed = (
-        _now()
-        - opened
-    ).total_seconds()
+    # ------------------------------------------------------------------
+    # Momentum fade
+    # ------------------------------------------------------------------
+    opened = _aware(trade.get("opened_at")) or _now()
+    elapsed = (_now() - opened).total_seconds()
 
     total_hold = strategy.timeout_seconds(
         trade["timeframe"],
-        float(
-            trade.get(
-                "max_hold_minutes",
-                15,
-            )
-        ),
+        float(trade.get("max_hold_minutes", 15)),
     )
 
-    # ✅ FIX: Check if signal is dict before using .get()
+    reverse_enabled = bool(cfg.get("reverse_exit_enabled", True))
+    reverse_confidence = float(cfg.get("reverse_exit_confidence", 60.0))
+    reverse_min_seconds = max(0.0, float(cfg.get("reverse_exit_min_hold_minutes", 1.0)) * 60)
     if (
-        signal
-        and isinstance(signal, dict)
-        and elapsed > total_hold * 0.35
-        and favorable < 0
-        and signal.get("direction")
-        not in (
+        reverse_enabled
+        and
+        isinstance(signal, dict)
+        and elapsed >= reverse_min_seconds
+        and signal.get("direction") not in (
             trade["direction"],
             "WAIT",
+            None,
         )
-        and float(
-            signal.get(
-                "confidence",
-                0,
-            )
-        ) >= 55
+        and float(signal.get("confidence") or 0.0) >= reverse_confidence
     ):
-
         await close_trade(
             trade,
-            price,
-            "MOMENTUM FADE",
+            float(price),
+            "MARKET REVERSE",
             (
                 f"The signal engine flipped to "
                 f"{signal['direction']} at "
-                f"{signal['confidence']:.1f}% confidence "
-                f"while this {trade['direction']} trade "
-                "was underwater."
+                f"{float(signal['confidence']):.1f}% confidence "
+                f"against this {trade['direction']} trade."
             ),
         )
-
         return
 
-    # --------------------------------------------------------------
-    # persist management changes
-    # --------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # Persist ALL management changes.
+    # ------------------------------------------------------------------
     if updates:
-
         if log:
             updates["management_log"] = (
-                list(
-                    trade.get(
-                        "management_log",
-                        [],
-                    )
-                )
-                + log
+                list(trade.get("management_log", [])) + log
             )
 
         await db.trades.update_one(
-            {"id": trade["id"]},
+            {"id": trade["id"], "status": "OPEN"},
             {"$set": updates},
         )
 
@@ -1726,15 +1645,22 @@ def stale_entry(
 # shared market evaluation
 # -------------------------------------------------------------------------
 
+def _signal_key(timeframe: str, symbol: Optional[str] = None) -> str:
+    return f"{str(symbol or market.DEFAULT_SYMBOL).upper()}::{timeframe}"
+
+
 async def evaluate(
     timeframe: str,
     cfg: Optional[Dict[str, Any]] = None,
+    symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
 
     cfg = (
         cfg
         or await settings_mod.get_defaults()
     )
+
+    symbol = str(symbol or market.DEFAULT_SYMBOL)
 
     needed = dict.fromkeys(
         [timeframe]
@@ -1753,14 +1679,14 @@ async def evaluate(
         # ✅ FIX: symbol first
         candles_by_tf[tf] = (
             await market.get_klines(
-                market.DEFAULT_SYMBOL,
+                symbol,
                 tf,
                 300,
             )
         )
 
     price = (
-        await market.get_price(market.DEFAULT_SYMBOL)
+        await market.get_price(symbol)
         or (
             candles_by_tf[timeframe][-1]["close"]
             if candles_by_tf.get(timeframe)
@@ -1769,20 +1695,21 @@ async def evaluate(
     )
 
     # ✅ FIX: symbol first
-    signal = await strategy.analyze(
-        symbol=market.DEFAULT_SYMBOL,
+    signal = strategy.analyze(
+        symbol=symbol,
         timeframe=timeframe,
         candles_by_tf=candles_by_tf,
         price=price,
-        cfg=cfg,
+        cfg={**cfg, "order_book": await market.get_order_book(symbol)},
     )
 
     signal["generated_at"] = (
         _now().isoformat()
     )
 
-    _signals[timeframe] = signal
-    _last_eval[timeframe] = time.time()
+    key = _signal_key(timeframe, symbol)
+    _signals[key] = signal
+    _last_eval[key] = time.time()
 
     return signal
 
@@ -1790,6 +1717,7 @@ async def evaluate(
 async def get_signal(
     timeframe: str,
     max_age: float = 10.0,
+    symbol: Optional[str] = None,
 ) -> Dict[str, Any]:
 
     cached = _signals.get(
@@ -1870,59 +1798,63 @@ async def cycle() -> None:
         )
 
         managed: set[str] = set()
+        price_cache: Dict[str, Optional[float]] = {}
 
-        price = await market.get_price(market.DEFAULT_SYMBOL)
+        for doc in open_docs:
 
-        if price:
+            trade = _clean(doc)
 
-            for doc in open_docs:
+            user_id = str(trade.get("user_id") or "")
+            symbol = str(
+                trade.get("symbol")
+                or market.DEFAULT_SYMBOL
+            )
 
-                trade = _clean(doc)
+            if user_id:
+                managed.add(user_id)
 
-                user_id = str(
-                    trade["user_id"]
+            try:
+                user_cfg = await settings_mod.get_settings(
+                    user_id,
+                    refresh=True,
                 )
 
-                managed.add(
-                    user_id
-                )
+                # Fetch the price for THIS trade's symbol.
+                if symbol not in price_cache:
+                    price_cache[symbol] = await market.get_price(symbol)
 
-                try:
+                trade_price = price_cache.get(symbol)
 
-                    user_cfg = (
-                        await settings_mod.get_settings(
-                            user_id,
-                            refresh=True,
-                        )
-                    )
-
-                    trade_signal = _signals.get(
-                        trade.get(
-                            "timeframe"
-                        )
-                    )
-
-                    # ✅ FIX: Check if signal is dict
-                    if trade_signal and isinstance(trade_signal, dict):
-                        await manage_open_trade(
-                            trade,
-                            price,
-                            trade_signal,
-                            user_cfg,
-                        )
-                    else:
-                        logger.warning(
-                            "Invalid signal for trade %s: %s",
-                            trade.get("id"),
-                            type(trade_signal),
-                        )
-
-                except Exception as exc:
+                if not trade_price:
                     logger.warning(
-                        "manage trade %s failed: %s",
+                        "price unavailable for open trade %s (%s)",
                         trade.get("id"),
-                        exc,
+                        symbol,
                     )
+                    continue
+
+                # Management never depends on a fresh signal.
+                # A fresh signal is only an optional input for momentum-fade.
+                tf = str(trade.get("timeframe") or "")
+                trade_signal = (
+                    _signals.get(_signal_key(tf, symbol))
+                    if tf
+                    else None
+                )
+
+                await manage_open_trade(
+                    trade,
+                    float(trade_price),
+                    trade_signal if isinstance(trade_signal, dict) else None,
+                    user_cfg,
+                )
+
+            except Exception as exc:
+                logger.exception(
+                    "manage trade %s failed: %s",
+                    trade.get("id"),
+                    exc,
+                )
 
         # ==============================================================
         # 5. MT5 execution.
@@ -2039,9 +1971,9 @@ async def cycle() -> None:
                 # Analyze using THIS USER'S configuration.
                 # ------------------------------------------------------
 
-                cfg_with_user = {**user_cfg, "user_id": user_id}
+                cfg_with_user = {**user_cfg, "user_id": user_id, "order_book": await market.get_order_book(symbol)}
                 # ✅ FIX: symbol first
-                user_signal = await strategy.analyze(
+                user_signal = strategy.analyze(
                     symbol=symbol,
                     timeframe=primary_tf,
                     candles_by_tf=candles_by_tf,
@@ -2391,7 +2323,8 @@ async def dashboard(
     symbol = symbol or market.DEFAULT_SYMBOL
 
     signal = await get_signal(
-        timeframe
+        timeframe,
+        symbol=symbol,
     )
 
     price = await market.get_price(symbol)
@@ -2458,7 +2391,7 @@ async def dashboard(
         ),
 
         "engine": health(),
-
+ 
         "server_time": (
             _now().isoformat()
         ),

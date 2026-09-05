@@ -1,162 +1,216 @@
 {
   "theme": "dark",
-  "project_context": {
-    "app_type": "trading_dashboard",
-    "target_component": "ActivePositionPanel",
-    "component_path": "/app/frontend/src/components/ActivePositionPanel.tsx",
-    "scope": "Modify existing ActivePositionPanel ONLY to support split Paper vs MT5 telemetry, displaying MT5 connection telemetry (Balance, Equity, Free Margin, Margin Level), MT5 active trade progress (Direction, Entry, SL, TP, P&L, TP/SL Progress), and exact execution gate / blocked reasons when >=80% confirmation occurs."
-  },
+  "archetype": "THE PERFORMANCE PRO / TACTICAL MINIMALISM",
+  "summary": "Focused UI/UX implementation guide for MT5 Basic (EA-bridge self-hosted) vs MT5 Managed (MetaApi cloud zero-terminal setup) plans, credential disclosures, upgrade flows, deployment telemetry, and Admin MT5 controls while maintaining the high-density trading terminal aesthetic.",
   "colors": {
     "surfaces": [
       {
+        "name": "page",
+        "kind": "solid",
+        "bg": "#0B0E14",
+        "on_bg": "#F1F5F9",
+        "on_bg_muted": "#94A3B8",
+        "roles": {
+          "link": "#38BDF8",
+          "error": "#F87171",
+          "success": "#34D399",
+          "warning": "#FBBF24"
+        }
+      },
+      {
         "name": "panel",
         "kind": "solid",
-        "bg": "#111827",
+        "bg": "#111722",
         "on_bg": "#F8FAFC",
         "on_bg_muted": "#94A3B8",
         "roles": {
-          "border": "#1E293B",
-          "border_focus": "#334155",
-          "accent_bitcoin": "#F59E0B",
-          "profit_emerald": "#10B981",
-          "profit_bg": "#064E3B",
-          "loss_rose": "#F43F5E",
-          "loss_bg": "#881337",
-          "info_sky": "#38BDF8",
-          "warning_amber": "#FBBF24",
-          "neutral_slate": "#64748B"
+          "link": "#38BDF8",
+          "error": "#F87171",
+          "success": "#34D399",
+          "warning": "#FBBF24"
         }
       },
       {
-        "name": "subpanel",
+        "name": "card_subtle",
         "kind": "solid",
-        "bg": "#0B0F19",
-        "on_bg": "#E2E8F0",
-        "on_bg_muted": "#64748B",
+        "bg": "#161F30",
+        "on_bg": "#F8FAFC",
+        "on_bg_muted": "#94A3B8",
         "roles": {
-          "border": "#1E293B",
-          "highlight": "#38BDF8"
+          "link": "#38BDF8",
+          "error": "#F87171",
+          "success": "#34D399"
         }
       },
       {
-        "name": "badge_buy",
+        "name": "managed_accent_surface",
         "kind": "solid",
-        "bg": "#022C22",
-        "on_bg": "#6EE7B7",
-        "on_bg_muted": "#34D399"
+        "bg": "#0D2338",
+        "on_bg": "#E0F2FE",
+        "on_bg_muted": "#7DD3FC",
+        "roles": {
+          "highlight": "#38BDF8",
+          "badge_border": "#0284C7"
+        }
       },
       {
-        "name": "badge_sell",
+        "name": "basic_accent_surface",
         "kind": "solid",
-        "bg": "#4C0519",
-        "on_bg": "#FDA4AF",
-        "on_bg_muted": "#FB7185"
+        "bg": "#1A2234",
+        "on_bg": "#E2E8F0",
+        "on_bg_muted": "#94A3B8"
       },
       {
-        "name": "badge_mt5_live",
+        "name": "security_banner",
         "kind": "solid",
-        "bg": "#1E1B4B",
-        "on_bg": "#A5B4FC",
-        "on_bg_muted": "#818CF8"
+        "bg": "#052E16",
+        "on_bg": "#DCFCE7",
+        "on_bg_muted": "#86EFAC",
+        "roles": {
+          "shield_icon": "#4ADE80",
+          "border": "#166534"
+        }
       },
       {
-        "name": "badge_mt5_disconnected",
+        "name": "inverse",
         "kind": "solid",
-        "bg": "#1F2937",
-        "on_bg": "#9CA3AF",
-        "on_bg_muted": "#6B7280"
-      },
-      {
-        "name": "alert_blocked",
-        "kind": "solid",
-        "bg": "#451A03",
-        "on_bg": "#FEF3C7",
-        "on_bg_muted": "#FDE68A"
+        "bg": "#F8FAFC",
+        "on_bg": "#0B0E14",
+        "on_bg_muted": "#475569"
       }
     ],
-    "accent": "#F59E0B",
-    "on_accent": "#000000"
+    "accent": "#0284C7",
+    "on_accent": "#FFFFFF",
+    "status": {
+      "connected": "#10B981",
+      "provisioning": "#F59E0B",
+      "offline": "#EF4444",
+      "synchronized": "#06B6D4",
+      "draft": "#64748B"
+    }
   },
   "typography": {
-    "font_family_heading": "IBM Plex Mono, JetBrains Mono, monospace",
-    "font_family_body": "Inter, IBM Plex Sans, sans-serif",
-    "font_family_numbers": "IBM Plex Mono, monospace",
+    "font_heading": "Barlow Condensed, Space Grotesk, Manrope, sans-serif",
+    "font_body": "Inter, IBM Plex Sans, -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_mono": "JetBrains Mono, IBM Plex Mono, monospace",
     "scale_px": {
-      "display": 28,
-      "h1": 22,
-      "h2": 18,
-      "h3": 14,
-      "body": 12,
-      "caption": 10
-    },
-    "tracking": {
-      "headers": "tracking-wider",
-      "numbers": "tabular-nums tracking-tight",
-      "labels": "tracking-widest uppercase"
+      "display": 48,
+      "h1": 36,
+      "h2": 28,
+      "h3": 20,
+      "h4": 16,
+      "body": 14,
+      "caption": 12
     }
   },
   "entry_surfaces": {
-    "/": "dark MT5 trading dashboard terminal with split top banner: signal confluence stream left, high-density split Paper & MT5 Active Position panel right"
+    "/mt5": "Dense dual-panel terminal — Active tier indicator & 2-tier plan comparison top, EA bridge setup OR MetaApi cloud provisioner form center, Live telemetry & Survival Mode controls right",
+    "/subscribe": "High-contrast pricing matrix with signal subscription prerequisite banner, MT5 Basic EA self-hosted tier vs MT5 Managed MetaApi 0-setup tier",
+    "/admin": "Command center data table with MetaApi server health indicator, active account provision states, and dynamic plan pricing/duration controls"
   },
-  "layouts": {
-    "container": "col-span-12 lg:col-span-5 rounded-md border border-slate-800 bg-[#111827] p-3 shadow-xl transition-all",
-    "header_bar": "flex items-center justify-between border-b border-slate-800/80 pb-2 mb-2.5",
-    "split_grid": "grid grid-cols-1 md:grid-cols-2 gap-2.5",
-    "paper_card": "rounded-md border border-slate-800/90 bg-[#0B0F19]/90 p-2.5 flex flex-col justify-between space-y-2",
-    "mt5_card": "rounded-md border border-indigo-950/60 bg-[#0C1021]/90 p-2.5 flex flex-col justify-between space-y-2 relative overflow-hidden",
-    "metric_strip": "grid grid-cols-4 gap-1 text-[10px] tabular-nums",
-    "progress_gauge": "space-y-1 py-1",
-    "blocked_reason_box": "rounded border border-amber-900/60 bg-amber-950/30 p-2 text-[10px] text-amber-200/90 space-y-1"
-  },
-  "motion": {
-    "panel_transition": "transition-colors duration-200 ease-out",
-    "progress_bar": "transition-[width] duration-700 cubic-bezier(0.4, 0, 0.2, 1)",
-    "pulse_dot": "animate-pulse duration-1000",
-    "pnl_flash": "transition-colors duration-300"
-  },
-  "accessibility": {
-    "contrast_ratio": "APCA-compliant 4.5:1+ against #111827 and #0B0F19 surfaces",
-    "reduced_motion": "respects prefers-reduced-motion with instant transitions",
-    "data_testids": {
-      "panel_root": "active-position-panel",
-      "paper_section": "paper-position-section",
-      "paper_trade_card": "paper-trade-card",
-      "paper_trade_direction": "paper-trade-direction",
-      "paper_trade_pnl": "paper-trade-pnl",
-      "paper_trade_progress": "paper-trade-progress",
-      "mt5_section": "mt5-position-section",
-      "mt5_status_badge": "mt5-connection-status-badge",
-      "mt5_balance": "mt5-telemetry-balance",
-      "mt5_equity": "mt5-telemetry-equity",
-      "mt5_free_margin": "mt5-telemetry-free-margin",
-      "mt5_margin_level": "mt5-telemetry-margin-level",
-      "mt5_trade_card": "mt5-active-trade-card",
-      "mt5_trade_direction": "mt5-trade-direction",
-      "mt5_trade_pnl": "mt5-trade-pnl",
-      "mt5_trade_entry": "mt5-trade-entry",
-      "mt5_trade_sl": "mt5-trade-sl",
-      "mt5_trade_tp": "mt5-trade-tp",
-      "mt5_trade_price": "mt5-trade-price",
-      "mt5_trade_progress": "mt5-trade-progress",
-      "execution_block_banner": "execution-blocked-reason-banner",
-      "close_paper_button": "close-paper-trade-button",
-      "close_mt5_button": "close-mt5-trade-button"
+  "key_architectural_decisions": {
+    "plan_tiering": {
+      "basic_tier": {
+        "title": "MT5 Basic (Self-Hosted EA)",
+        "cost": "Included in standard MT5 Auto-Trading pricing",
+        "workflow": "User installs MT5 terminal on Windows/VPS, compiles UniversalTerminalBridge.mq5, attaches EA with token & bridge URL",
+        "survival_mode": "Supported (Local EA + Server heartbeat validation)"
+      },
+      "managed_tier": {
+        "title": "MT5 Managed (Zero-Terminal MetaApi Cloud)",
+        "cost": "₹2,999 for 30 days (requires normal Signal subscription)",
+        "workflow": "User enters MT5 Login, Password, Broker Server, Account Mode (Live/Demo). Plaintext password sent directly to MetaApi provisioning API over HTTPS and immediately discarded. Server stores only MetaApi account IDs.",
+        "survival_mode": "Supported (Cloud RPC & server-side margin/drawdown guard)"
+      }
+    },
+    "upgrade_policy": {
+      "existing_users_migration": "Existing MT5 Auto-Trading subscribers migrate to MT5 Basic with all remaining entitlement days preserved intact.",
+      "upgrade_rule": "Full-price upgrade (₹2,999 for 30 days) with no prorated/unused-time deduction. Instant activation of Cloud Deployment slot."
+    },
+    "security_disclosure": {
+      "disclosure_copy": "Zero Plaintext Storage Guarantee: Your MT5 credentials are transmitted over encrypted TLS directly to our isolated MetaApi cloud deployment pod and purged immediately from server memory. We only retain your provisioning account ID and read-only telemetry handle.",
+      "visual_treatment": "Dedicated emerald-tinted security callout (`bg-[#052E16] border-[#166534]`) with ShieldCheck icon and lock badge next to the credential inputs."
     }
   },
+  "layouts_and_components": {
+    "plan_comparison_card_grid": {
+      "container_layout": "grid grid-cols-1 md:grid-cols-2 gap-4 my-4",
+      "basic_card": "border border-slate-800 bg-[#111722] rounded-lg p-5 flex flex-col justify-between relative",
+      "managed_card": "border-2 border-sky-500/60 bg-[#0D2338]/80 shadow-[0_0_20px_rgba(2,132,199,0.15)] rounded-lg p-5 flex flex-col justify-between relative",
+      "managed_badge": "absolute -top-3 right-4 bg-sky-500 text-white font-mono text-[11px] font-bold px-2.5 py-0.5 rounded uppercase tracking-wider shadow-sm"
+    },
+    "managed_credentials_form": {
+      "container": "bg-[#111722] border border-slate-800 rounded-lg p-6 space-y-4",
+      "fields": [
+        {"name": "account_type", "type": "segmented_radio", "options": ["Demo Account", "Live Account"], "data_testid": "mt5-form-account-type"},
+        {"name": "broker_server", "type": "input", "placeholder": "e.g., Exness-MT5Real, ICmarketsSC-Live", "data_testid": "mt5-form-broker-server"},
+        {"name": "account_login", "type": "input", "placeholder": "MT5 Login ID (e.g. 10928374)", "data_testid": "mt5-form-account-login"},
+        {"name": "account_password", "type": "password_input", "placeholder": "MT5 Master/Trade Password", "data_testid": "mt5-form-account-password"},
+        {"name": "symbol_family", "type": "select", "options": ["BTC/USD Family", "XAU/USD Gold Family"], "data_testid": "mt5-form-symbol-family"},
+        {"name": "lot_size", "type": "number_input", "placeholder": "0.01", "data_testid": "mt5-form-lot-size"}
+      ],
+      "submit_cta": "Connect & Provision MetaApi Cloud",
+      "cta_testid": "mt5-connect-managed-submit"
+    },
+    "telemetry_and_status_panel": {
+      "badges": {
+        "tier_badge": "bg-slate-800 text-sky-400 font-mono text-xs px-2.5 py-1 rounded border border-slate-700",
+        "metaapi_status": "flex items-center gap-1.5 font-mono text-xs px-2.5 py-1 rounded",
+        "sync_state": "Synchronized / Provisioning / Reconnecting / Active"
+      },
+      "survival_mode_toggle": {
+        "title": "Survival Mode Guard",
+        "description": "Dynamic volatility-based lot dampening & equity protection active for both Basic and Managed tiers.",
+        "switch_testid": "mt5-survival-mode-toggle"
+      }
+    },
+    "admin_mt5_controls": {
+      "pricing_editor": "Admin modal/card to adjust MT5 Basic price, MT5 Managed price (₹2,999 default), duration days (30 default), and availability toggle",
+      "metaapi_health_indicator": "Read-only system status chip displaying MetaApi Provisioning API reachability, active cloud accounts count, and latency."
+    }
+  },
+  "motion_and_interactions": {
+    "tier_selection_transition": "transition-all duration-200 ease-out hover:border-sky-500/40 hover:-translate-y-0.5",
+    "managed_glow": "animate-pulse duration-1000 for cloud provisioning synchronization",
+    "button_press": "active:scale-[0.98] transition-transform duration-100",
+    "respect_reduced_motion": "Wrap non-essential pulses with @media(prefers-reduced-motion: no-preference)"
+  },
+  "accessibility_and_compliance": {
+    "wcag_contrast": "All text tokens meet AA 4.5:1 minimum on dark base (#0B0E14) and panel (#111722)",
+    "input_accessibility": "All inputs include explicit <Label> with htmlFor matching input id, clear aria-describedby for password security guarantees",
+    "data_testids_required": [
+      "mt5-plan-card-basic",
+      "mt5-plan-card-managed",
+      "mt5-plan-upgrade-btn",
+      "mt5-form-account-type",
+      "mt5-form-broker-server",
+      "mt5-form-account-login",
+      "mt5-form-account-password",
+      "mt5-form-symbol-family",
+      "mt5-form-lot-size",
+      "mt5-connect-managed-submit",
+      "mt5-security-disclosure-banner",
+      "mt5-status-badge",
+      "mt5-survival-mode-toggle",
+      "mt5-disconnect-btn",
+      "admin-mt5-pricing-edit-btn",
+      "admin-metaapi-status-badge"
+    ]
+  },
   "instructions_to_main_agent": [
-    "1. Preserve the dark MT5-inspired terminal aesthetic (#111827 main panel, #0B0F19 sub-cards, slate-800 borders, emerald/rose PnL text, amber badges).",
-    "2. Split the ActivePositionPanel into two distinct side-by-side (or responsive stacked) sections: 'PAPER ENGINE' and 'MT5 LIVE TERMINAL'.",
-    "3. Display full MT5 telemetry when MT5 is connected: Balance, Equity, Free Margin, and Margin Level (%). Show a clean 'Disconnected' state with prompt when MT5 is offline.",
-    "4. For MT5 active trades, display Ticket/Symbol, Direction (BUY/SELL), Lot size, Entry, SL, TP, Current Price, Floating P&L ($ and R-multiple), and a dual-direction or TP/SL progress indicator.",
-    "5. Highlight why no trade executed even with >=80% confidence: Render an explicit 'Execution Gate Status' or 'Blocked Reason' chip/banner (e.g., 'Confidence 84% >= 80% threshold, but MT5 AutoTrading disabled' or 'Spread 3.2 > Max 2.5' or 'Margin check failed' or 'No manual override').",
-    "6. Include all required data-testid attributes for automated testing verification.",
-    "7. Maintain compact information density with monospace tabular numerals for prices and financial figures."
+    "1. Preserve the existing dark tactical terminal aesthetic in /frontend/src/pages/Mt5.tsx and Admin panels.",
+    "2. On /mt5, render a top tier comparison banner showing MT5 Basic vs MT5 Managed (₹2,999/30d) with distinct visual hierarchies.",
+    "3. If the user is on MT5 Basic, show the EA download + Bridge token tab, with an 'Upgrade to Managed Cloud (₹2,999)' instant action.",
+    "4. If the user has MT5 Managed entitlement, show the streamlined 'Zero-Terminal Setup' credential form with the Security Guarantee banner prominently rendered above the inputs.",
+    "5. Ensure Demo and Live accounts can both be selected in the managed form.",
+    "6. Show real-time MetaApi connection status (Provisioning, Connected, Synchronized, Error) alongside existing balance/equity metrics.",
+    "7. Ensure Survival Mode settings and status are available for both Basic and Managed accounts.",
+    "8. In the Admin panel, provide controls to edit pricing, duration, and view read-only MetaApi configuration status."
   ],
-  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
-    "You tend to converge toward generic outputs. In frontend design, keep this high-density Bloomberg/MT5 terminal feel.",
-    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
-    "Do not center-align tabular numbers or telemetry stats; use right or left alignment with monospace font.",
-    "Ensure every state (Flat, In Position, Partial Close, Breakeven, Blocked Execution) renders with zero layout shifts.",
-    "Always use the pre-existing types and utilities in @/lib/types and @/lib/utils."
-  ]
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "layout": "Avoid generic centered layouts. Use dense data-forward grids with high contrast typography.",
+    "buttons": "Use tactical sharp or pill buttons with explicit hover and active states (never transparent or generic).",
+    "icons": "Use lucide-react (e.g. ShieldCheck, CloudLightning, Terminal, Server, ArrowUpRight, Zap, RefreshCw). Never emojis for UI icons.",
+    "spacing": "Maintain generous breathing room between dense widgets (p-5 or p-6 for panels, gap-4 for grids)."
+  }
 }

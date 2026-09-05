@@ -70,18 +70,33 @@ PLANS: List[Dict[str, Any]] = [
     },
     {
         "id": "mt5-live-monthly",
-        "name": "MT5 Auto-Trading",
+        "name": "MT5 Basic",
         "price_inr": 1499.0,
         "days": 30,
         "features": [
-            "Demo and live MT5 account execution",
+            "Demo and live MT5 execution with your Windows terminal",
             "BTC/USDT-only safety allowlist",
             "Confidence-triggered automatic entries",
             "EA-managed SL, TP, break-even, partials, trailing and autocut",
         ],
         "is_active": True,
         "highlight": False,
-        "product_type": "mt5_live",
+        "product_type": "mt5_basic",
+    },
+    {
+        "id": "mt5-managed-monthly",
+        "name": "MT5 Managed",
+        "price_inr": 2999.0,
+        "days": 30,
+        "features": [
+            "No Windows terminal or EA setup required",
+            "Secure MetaApi cloud connection for demo and live MT5",
+            "Broker-matched data and server-managed execution",
+            "Dual-agent Survival Mode with deterministic risk shutdowns",
+        ],
+        "is_active": True,
+        "highlight": True,
+        "product_type": "mt5_managed",
     },
 ]
 
@@ -148,9 +163,10 @@ async def run() -> None:
         {"id": "mt5-live-monthly"},
         {
             "$set": {
-                "name": "MT5 Auto-Trading",
+                "name": "MT5 Basic",
+                "product_type": "mt5_basic",
                 "features": [
-                    "Demo and live MT5 account execution",
+                    "Demo and live MT5 execution with your Windows terminal",
                     "BTC/USDT-only safety allowlist",
                     "Confidence-triggered automatic entries",
                     "EA-managed SL, TP, break-even, partials, trailing and autocut",
@@ -158,6 +174,15 @@ async def run() -> None:
             }
         },
     )
+    # Preserve every legacy subscriber's remaining entitlement as MT5 Basic.
+    legacy_users = await db.users.find(
+        {"mt5_live_subscription": {"$exists": True}, "mt5_basic_subscription": {"$exists": False}}
+    ).to_list(10_000)
+    for legacy_user in legacy_users:
+        await db.users.update_one(
+            {"id": legacy_user["id"]},
+            {"$set": {"mt5_basic_subscription": legacy_user["mt5_live_subscription"]}},
+        )
 
     # --- site settings
     if not await db.site_settings.find_one({"id": "main"}):
@@ -185,5 +210,15 @@ async def run() -> None:
         await db.mt5_commands.create_index("idempotency_key", unique=True)
         await db.mt5_commands.create_index([("account_id", 1), ("status", 1), ("created_at", 1)])
         await db.mt5_positions.create_index([("account_id", 1), ("ticket", 1)], unique=True)
+        await db.telegram_alert_cooldowns.create_index("key", unique=True)
+        await db.telegram_alert_cooldowns.create_index("expires_at", expireAfterSeconds=0)
+        await db.order_book_snapshots.create_index([("symbol", 1), ("captured_at", -1)])
+        await db.order_book_snapshots.create_index("captured_at", expireAfterSeconds=2_592_000)
+        await db.broker_ticks.create_index([("account_id", 1), ("captured_at", -1)])
+        await db.broker_ticks.create_index("captured_at", expireAfterSeconds=604_800)
+        await db.broker_candles.create_index([("account_id", 1), ("timeframe", 1), ("open_time", 1)], unique=True)
+        await db.mt5_survival.create_index("account_id", unique=True)
+        await db.mt5_survival_decisions.create_index("decision_key", unique=True)
+        await db.mt5_survival_decisions.create_index([("account_id", 1), ("created_at", -1)])
     except Exception as exc:  # noqa: BLE001
         logger.warning("index creation skipped: %s", exc)

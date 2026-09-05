@@ -22,6 +22,8 @@ import json
 import os
 import time
 from contextlib import suppress
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -45,24 +47,23 @@ INTERVAL_MINUTES = {
 # ✅ Define supported symbols with provider routing
 SUPPORTED_SYMBOLS = {
     "BTCUSDT": {
-        "provider": "coinbase",
-        "product_id": "BTC-USD",
+        "provider": "binance",
+        "product_id": "BTCUSDT",
         "display": "BTCUSDT",
         "min_price": 10000,
         "max_price": 150000,
         "point": 0.01,
         "digits": 2,
-        "rest_base": "https://api.coinbase.com/api/v3",
-        "ws_base": "wss://advanced-trade-ws.coinbase.com",
-        "candles_path": "/brokerage/market/products/BTC-USD/candles",
-        "price_path": "/brokerage/market/products/BTC-USD/ticker",
-        "stats_path": "/brokerage/market/products/BTC-USD",
+        "rest_base": "https://data-api.binance.vision/api/v3",
+        "candles_path": "/klines",
+        "price_path": "/ticker/price",
+        "stats_path": "/ticker/24hr",
         "granularity_map": {
-            "1m": "ONE_MINUTE",
-            "5m": "FIVE_MINUTE",
-            "15m": "FIFTEEN_MINUTE",
-            "30m": "THIRTY_MINUTE",
-            "1h": "ONE_HOUR",
+            "1m": "1m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
         },
         "granularity_seconds": {
             "1m": 60,
@@ -73,25 +74,26 @@ SUPPORTED_SYMBOLS = {
         }
     },
     "XAUUSD": {
-        "provider": "bybit",
-        "product_id": "XAUUSDT",
+        "provider": "binance",
+        "product_id": "PAXGUSDT",
         "display": "XAUUSD",
-        "min_price": 1500,
-        "max_price": 3500,
+        "min_price": 1000,
+        "max_price": 6000,
         "point": 0.01,
         "digits": 2,
-        "rest_base": "https://api.bybit.com/v5",
-        "ws_base": "wss://stream.bybit.com/v5/public/spot",
-        "candles_path": "/market/kline",
-        "price_path": "/market/tickers",
-        "stats_path": "/market/tickers",
-        "category": "spot",
+        # Binance spot data mirror (api.binance.com is geo-blocked / 451 from this
+        # region; the public data mirror is reachable and needs no API key). PAXGUSDT
+        # is PAX Gold — a 1oz-gold-backed spot token priced ~= XAU/oz. REST-only.
+        "rest_base": "https://data-api.binance.vision/api/v3",
+        "candles_path": "/klines",
+        "price_path": "/ticker/price",
+        "stats_path": "/ticker/24hr",
         "granularity_map": {
-            "1m": "1",
-            "5m": "5",
-            "15m": "15",
-            "30m": "30",
-            "1h": "60",
+            "1m": "1m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
         },
         "granularity_seconds": {
             "1m": 60,
@@ -129,6 +131,9 @@ _ws_running: Dict[str, bool] = {}
 
 _kline_cache: Dict[str, Dict[str, Any]] = {}
 _price_cache: Dict[str, Dict[str, Any]] = {}
+_depth_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_depth_last_persist: Dict[str, float] = {}
+_depth_lock = asyncio.Lock()
 
 _live_price: Dict[str, Optional[float]] = {}
 _live_price_at: Dict[str, float] = {}
@@ -157,6 +162,112 @@ async def close_http() -> None:
     if _client is not None:
         await _client.aclose()
         _client = None
+
+
+def _neutral_order_book(symbol: str, error: str = "") -> Dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "provider_symbol": get_product_id(symbol),
+        "stale": True,
+        "imbalance": 0.0,
+        "near_imbalance": 0.0,
+        "spread_bps": None,
+        "bid_notional": 0.0,
+        "ask_notional": 0.0,
+        "near_bid_notional": 0.0,
+        "near_ask_notional": 0.0,
+        "bids": [],
+        "asks": [],
+        "captured_at": datetime.now(timezone.utc),
+        "error": error,
+    }
+
+
+async def get_order_book(symbol: str, limit: int = 20) -> Dict[str, Any]:
+    """Return validated Binance depth metrics; failures are neutral, never blocking."""
+    symbol = symbol.upper()
+    info = SUPPORTED_SYMBOLS.get(symbol)
+    if not info or info.get("provider") != "binance":
+        return _neutral_order_book(symbol, "order book unavailable for this provider")
+
+    now_mono = time.time()
+    cached = _depth_cache.get(symbol)
+    if cached and now_mono - cached[0] < 3.0:
+        return dict(cached[1])
+
+    async with _depth_lock:
+        cached = _depth_cache.get(symbol)
+        if cached and time.time() - cached[0] < 3.0:
+            return dict(cached[1])
+        try:
+            endpoint = f"{info['rest_base']}/depth"
+            raw = await _rest_get(endpoint, {"symbol": info["product_id"], "limit": min(20, max(5, limit))})
+            if not isinstance(raw, dict):
+                raise ValueError("invalid depth payload")
+
+            def parse_levels(value: Any) -> List[List[float]]:
+                if not isinstance(value, list):
+                    raise ValueError("invalid depth levels")
+                parsed: List[List[float]] = []
+                for level in value[:20]:
+                    if not isinstance(level, list) or len(level) < 2:
+                        raise ValueError("invalid depth level")
+                    try:
+                        price = Decimal(str(level[0]))
+                        quantity = Decimal(str(level[1]))
+                    except (InvalidOperation, ValueError) as exc:
+                        raise ValueError("invalid depth decimal") from exc
+                    if price <= 0 or quantity <= 0:
+                        raise ValueError("non-positive depth level")
+                    parsed.append([float(price), float(quantity)])
+                return parsed
+
+            bids = parse_levels(raw.get("bids"))
+            asks = parse_levels(raw.get("asks"))
+            if not bids or not asks or asks[0][0] < bids[0][0]:
+                raise ValueError("invalid two-sided order book")
+
+            bid_notional = sum(price * quantity for price, quantity in bids)
+            ask_notional = sum(price * quantity for price, quantity in asks)
+            total = bid_notional + ask_notional
+            imbalance = (bid_notional - ask_notional) / total if total else 0.0
+            best_bid, best_ask = bids[0][0], asks[0][0]
+            mid = (best_bid + best_ask) / 2
+            spread_bps = (best_ask - best_bid) / mid * 10_000 if mid else None
+            near_band = 0.001
+            near_bid = sum(p * q for p, q in bids if p >= mid * (1 - near_band))
+            near_ask = sum(p * q for p, q in asks if p <= mid * (1 + near_band))
+            near_total = near_bid + near_ask
+            near_imbalance = (near_bid - near_ask) / near_total if near_total else 0.0
+            captured_at = datetime.now(timezone.utc)
+            result = {
+                "symbol": symbol,
+                "provider_symbol": info["product_id"],
+                "last_update_id": int(raw.get("lastUpdateId") or 0),
+                "stale": False,
+                "imbalance": round(imbalance, 6),
+                "near_imbalance": round(near_imbalance, 6),
+                "spread_bps": round(spread_bps, 4) if spread_bps is not None else None,
+                "bid_notional": round(bid_notional, 2),
+                "ask_notional": round(ask_notional, 2),
+                "near_bid_notional": round(near_bid, 2),
+                "near_ask_notional": round(near_ask, 2),
+                "bids": bids[:10],
+                "asks": asks[:10],
+                "captured_at": captured_at,
+                "error": "",
+            }
+            _depth_cache[symbol] = (time.time(), result)
+
+            if time.time() - _depth_last_persist.get(symbol, 0.0) >= 30.0:
+                from lib.db import db
+                await db.order_book_snapshots.insert_one(dict(result))
+                _depth_last_persist[symbol] = time.time()
+            return dict(result)
+        except Exception as exc:
+            result = _neutral_order_book(symbol, f"depth unavailable: {type(exc).__name__}")
+            _depth_cache[symbol] = (time.time(), result)
+            return result
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +559,8 @@ async def get_klines(
             candles = await _get_coinbase_klines(symbol, interval, limit, info)
         elif provider == "bybit":
             candles = await _get_bybit_klines(symbol, interval, limit, info)
+        elif provider == "binance":
+            candles = await _get_binance_klines(symbol, interval, limit, info)
         else:
             return []
         
@@ -530,6 +643,40 @@ async def _get_bybit_klines(symbol: str, interval: str, limit: int, info: Dict) 
     return candles
 
 
+async def _get_binance_klines(symbol: str, interval: str, limit: int, info: Dict) -> List[Dict]:
+    """Fetch candles from the Binance public spot data mirror (REST, no key)."""
+    product_id = info.get("product_id", "PAXGUSDT")
+    binance_interval = info["granularity_map"].get(interval, "1m")
+    granularity_seconds = info["granularity_seconds"].get(interval, 60)
+    rest_base = info.get("rest_base", "https://data-api.binance.vision/api/v3")
+
+    params = {
+        "symbol": product_id,
+        "interval": binance_interval,
+        "limit": min(int(limit), 1000),
+    }
+
+    raw = await _rest_get(f"{rest_base}{info['candles_path']}", params)
+    if not isinstance(raw, list):
+        return []
+
+    # Binance kline: [openTime(ms), open, high, low, close, volume, closeTime(ms), ...]
+    candles = []
+    for k in raw:
+        open_sec = int(k[0]) // 1000  # seconds, to match the coinbase path
+        candles.append({
+            "time": open_sec,
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+            "close_time": open_sec + granularity_seconds,
+        })
+    # Binance already returns oldest -> newest, which is the app's expected order.
+    return candles
+
+
 # ---------------------------------------------------------------------------
 # Price - Multi-Provider
 # ---------------------------------------------------------------------------
@@ -554,6 +701,8 @@ async def get_price(symbol: str = None) -> Optional[float]:
             price = await _get_coinbase_price(symbol, info)
         elif provider == "bybit":
             price = await _get_bybit_price(symbol, info)
+        elif provider == "binance":
+            price = await _get_binance_price(symbol, info)
         else:
             return None
         
@@ -608,6 +757,16 @@ async def _get_bybit_price(symbol: str, info: Dict) -> Optional[float]:
     return None
 
 
+async def _get_binance_price(symbol: str, info: Dict) -> Optional[float]:
+    """Fetch price from the Binance public spot data mirror."""
+    product_id = info.get("product_id", "PAXGUSDT")
+    rest_base = info.get("rest_base", "https://data-api.binance.vision/api/v3")
+
+    data = await _rest_get(f"{rest_base}{info['price_path']}", {"symbol": product_id})
+    price = float(data.get("price", 0)) if isinstance(data, dict) else 0.0
+    return price or None
+
+
 # ---------------------------------------------------------------------------
 # Stats - Multi-Provider
 # ---------------------------------------------------------------------------
@@ -623,6 +782,8 @@ async def get_stats_24h(symbol: str = None) -> Dict[str, float]:
             return await _get_coinbase_stats(symbol, info)
         elif provider == "bybit":
             return await _get_bybit_stats(symbol, info)
+        elif provider == "binance":
+            return await _get_binance_stats(symbol, info)
         return {}
         
     except Exception as exc:
@@ -694,6 +855,25 @@ async def _get_bybit_stats(symbol: str, info: Dict) -> Dict[str, float]:
         "volume_24h": float(ticker.get("volume24h", 0)),
         "change_24h": float(ticker.get("price24hPcnt", 0)) * 100,
         "change_pct_24h": float(ticker.get("price24hPcnt", 0)) * 100,
+    }
+
+
+async def _get_binance_stats(symbol: str, info: Dict) -> Dict[str, float]:
+    """Fetch 24h stats from the Binance public spot data mirror."""
+    product_id = info.get("product_id", "PAXGUSDT")
+    rest_base = info.get("rest_base", "https://data-api.binance.vision/api/v3")
+
+    data = await _rest_get(f"{rest_base}{info['stats_path']}", {"symbol": product_id})
+    if not isinstance(data, dict):
+        return {}
+
+    return {
+        "open_24h": float(data.get("openPrice", 0)),
+        "high_24h": float(data.get("highPrice", 0)),
+        "low_24h": float(data.get("lowPrice", 0)),
+        "volume_24h": float(data.get("volume", 0)),
+        "change_24h": float(data.get("priceChange", 0)),
+        "change_pct_24h": float(data.get("priceChangePercent", 0)),
     }
 
 
